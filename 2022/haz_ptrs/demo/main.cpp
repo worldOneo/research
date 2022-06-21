@@ -14,8 +14,12 @@ struct MyDeleter {
   }
 };
 
+struct MyFactory {
+  std::string *operator()() { return new std::string("hello"); }
+};
+
 int main() {
-  auto epocher = new HazEpochs<std::string, MyDeleter>(64);
+  auto epocher = new haz_ptrs::HazEpochs<std::string, MyDeleter>(64);
   auto cleaner = epocher->begin();
   cleaner->enter();
   for (int i = 0; i < 10000; i++) {
@@ -29,5 +33,14 @@ int main() {
     cleaner->retire(str);
   }
   std::cout << "deletes: " << deletes << std::endl;
+
+  auto versioner = new haz_ptrs::HazVersions<std::string, MyFactory>(
+      std::make_unique<MyFactory>());
+  auto version = versioner->begin();
+  for (int i = 0; i < 10000; i++) {
+    auto str = version->allocate();
+    // std::cout << "version: " << str.get() << std::endl;
+    version->retire(std::move(str));
+  }
   return 0;
 }

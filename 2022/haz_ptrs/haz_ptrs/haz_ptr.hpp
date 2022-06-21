@@ -22,16 +22,18 @@ class RWSpinLock {
   static const int64_t kNotLocked = 0x2000000000;
 };
 
+namespace haz_ptrs {
+
+template <typename T>
 struct DefaultDeleter {
-  template <typename T>
-  void operator()(T *ptr) {
-    delete ptr;
-  }
+  void operator()(T *ptr) { delete ptr; }
 };
 
+template <typename T>
 struct DefaultFactory {
-  template <typename T>
   T *operator()() {
+    static_assert(std::is_default_constructible<T>::value,
+                  "T must be default constructible for DefaultFactory");
     return new T;
   }
 };
@@ -69,32 +71,32 @@ class Retired {
 };
 
 static const uint64_t kNoEpoch = (uint64_t)~0;
-static const uint64_t kEpochFreq = 1000;
+static const uint64_t kEpochFreq = 100;
 
 class MinEpoch {
  public:
   virtual uint64_t min_epoch() = 0;
 };
 
-template <typename T, typename Deleter = DefaultDeleter>
+template <typename T, typename Deleter>
 class Cleaner {
  public:
   using atom_cnt = std::atomic_uint64_t;
   Cleaner(atom_cnt *my_e, atom_cnt *global_e, MinEpoch *min_epoch,
-          const Deleter deleter = Deleter{})
+          Deleter *deleter = Deleter{})
       : my_e(my_e),
         global_e(global_e),
         min_epoch(min_epoch),
         deleter(deleter) {}
   ~Cleaner() {
     for (auto &ptr : retired_ptrs) {
-      deleter(ptr);
+      (*deleter)(ptr.ptr);
     }
   }
   void enter() { my_e->store(global_e->load()); }
   void exit() { my_e->store(kNoEpoch); }
   void retire(T *ptr) {
-    auto retired = Retired<T, Deleter>(ptr, global_e->load(), &deleter);
+    auto retired = Retired<T, Deleter>(ptr, global_e->load(), deleter);
     retired_ptrs.push_back(std::move(retired));
     counter++;
     if (counter % kEpochFreq == 0) {
@@ -125,58 +127,72 @@ class Cleaner {
   atom_cnt *my_e;
   atom_cnt *global_e;
   MinEpoch *min_epoch;
-  Deleter deleter;
+  Deleter *deleter;
   uint64_t counter = 0;
 };
 
-template <typename T, typename Deleter = DefaultDeleter>
+template <typename T>
+struct ThreadStackNode {
+  std::atomic<ThreadStackNode *> next;
+  T *value;
+};
+
+template <typename T>
+class ThreadStack {
+ public:
+  std::atomic<ThreadStackNode<T> *> head;
+  ThreadStack() : head(nullptr) {}
+  void push(T *value) {
+    ThreadStackNode<T> *new_node = new ThreadStackNode<T>{};
+    ThreadStackNode<T> *next = head.load();
+    new_node->next.store(next);
+    new_node->value = value;
+
+    while (!head.compare_exchange_weak(next, new_node)) {
+      next = head.load();
+      new_node->next.store(next);
+    }
+  }
+
+  T *pop() {
+    ThreadStackNode<T> *node = head.load();
+    while (node != nullptr) {
+      if (head.compare_exchange_weak(node, node->next.load())) {
+        T *e = node->value;
+        delete node;
+        return e;
+      }
+      node = head.load();
+    }
+    return nullptr;
+  }
+
+  ~ThreadStack() {
+    T *old = pop();
+    while (old != nullptr) {
+      delete old;
+      old = pop();
+    }
+  }
+};
+
+template <typename T, typename Deleter = DefaultDeleter<T>>
 class HazEpochs : public MinEpoch {
   static_assert(std::is_invocable_v<Deleter, T *>,
                 "Deleter must be invocable with a T*");
 
   using atom_cnt = std::atomic_uint64_t;
+  using _Cleaner = Cleaner<T, Deleter>;
 
  private:
-  struct ThreadStackNode {
-    std::atomic<ThreadStackNode *> next;
-    Cleaner<T, Deleter> *cleaner;
-  };
-  class ThreadStack {
-   public:
-    std::atomic<ThreadStackNode *> head;
-    ThreadStack() : head(nullptr) {}
-    void push(Cleaner<T, Deleter> *cleaner) {
-      ThreadStackNode *new_node = new ThreadStackNode{};
-      ThreadStackNode *next = head.load();
-      new_node->next.store(next);
-      new_node->cleaner = cleaner;
-
-      while (!head.compare_exchange_weak(next, new_node)) {
-        next = head.load();
-        new_node->next.store(next);
-      }
-    }
-    Cleaner<T, Deleter> *pop() {
-      ThreadStackNode *node = head.load();
-      while (node != nullptr) {
-        if (head.compare_exchange_weak(node, node->next.load())) {
-          Cleaner<T, Deleter> *e = node->cleaner;
-          delete node;
-          return e;
-        }
-        node = head.load();
-      }
-      return nullptr;
-    }
-  };
-  ThreadStack thread_stack;
+  ThreadStack<_Cleaner> thread_stack;
   std::vector<std::unique_ptr<atom_cnt>> reservations;
   atom_cnt global_epoch;
   size_t num_threads;
-  Deleter deleter;
+  Deleter *deleter;
 
  public:
-  HazEpochs(const size_t num_threads, const Deleter deleter = Deleter{})
+  HazEpochs(const size_t num_threads, Deleter *deleter = new Deleter())
       : num_threads(num_threads), deleter(deleter) {
     atom_cnt *cnts = (atom_cnt *)calloc(num_threads, sizeof(atom_cnt));
     for (size_t i = 0; i < num_threads; i++) {
@@ -185,8 +201,8 @@ class HazEpochs : public MinEpoch {
     }
     global_epoch.store(0);
     for (auto &reservation : reservations) {
-      auto cleaner = new Cleaner<T, Deleter>(reservation.get(), &global_epoch,
-                                             this, deleter);
+      auto cleaner =
+          new _Cleaner(reservation.get(), &global_epoch, this, deleter);
       thread_stack.push(cleaner);
     }
   }
@@ -202,7 +218,7 @@ class HazEpochs : public MinEpoch {
     return min;
   }
 
-  Cleaner<T, Deleter> *begin() {
+  _Cleaner *begin() {
     auto e = thread_stack.pop();
     if (e == nullptr) {
       throw std::runtime_error("Maximum number of threads reached");
@@ -210,5 +226,128 @@ class HazEpochs : public MinEpoch {
     return e;
   }
 
-  void end(Cleaner<T, Deleter> *e) { thread_stack.push(e); }
+  void end(_Cleaner *e) { thread_stack.push(e); }
 };
+
+template <typename T>
+class VersionedPtr {
+ public:
+  VersionedPtr(T *ptr, uint64_t version) {
+    versionPtr.store((((__int128_t)ptr) << 64) | ((__int128_t)version));
+  }
+  VersionedPtr() { versionPtr.store(0); }
+  VersionedPtr(VersionedPtr<T> &&other) {
+    versionPtr.store(other.versionPtr);
+    other.versionPtr.store(0);
+  }
+  VersionedPtr<T> &operator=(VersionedPtr<T> &&other) {
+    versionPtr.store(other.versionPtr);
+    other.versionPtr.store(0);
+    return *this;
+  }
+
+  bool replace(VersionedPtr<T> &ptr) {
+    __int128_t old = versionPtr.load();
+    if (versionPtr.compare_exchange_weak(old, ptr.versionPtr.load())) {
+      ptr.versionPtr.store(old);
+      return true;
+    }
+    return false;
+  }
+
+  T *get() { return load().first; }
+
+ private:
+  std::pair<T *, uint64_t> load() {
+    auto v = versionPtr.load();
+    return std::make_pair((T *)((uintptr_t)(v >> 64)), v & kVersionMask);
+  }
+  std::atomic<__int128_t> versionPtr{0};
+  static const __int128_t kVersionMask = (~(__int128_t)0) >> 64;
+};
+
+class VersionedReader {
+ public:
+  VersionedReader(std::atomic<uint64_t> *global_e) : global_e(global_e) {
+    restart();
+  }
+  bool validate() {
+    auto global_epoch = global_e->load();
+    return epoch == global_epoch;
+  }
+  void restart() { epoch = global_e->load(); }
+
+ private:
+  std::atomic<uint64_t> *global_e;
+  uint64_t epoch;
+};
+
+template <typename T, typename Factory>
+class VersionPool {
+  static_assert(std::is_invocable_r_v<T *, Factory>,
+                "Factory must return a pointer to a T");
+  using _Ptr = VersionedPtr<T>;
+
+ public:
+  VersionPool(std::atomic<uint64_t> *global_e, Factory *factory = new Factory())
+      : global_e(global_e), factory(factory) {}
+
+  VersionedReader begin() { return VersionedReader(global_e); }
+  _Ptr allocate() {
+    uint64_t epoch = global_e->load();
+    if (!pool.empty()) {
+      Retired ptr = std::move(pool.back());
+      pool.pop_back();
+
+      if (ptr.version == epoch) {
+        global_e->fetch_add(1);
+      }
+      return VersionedPtr(ptr.ptr.release(), epoch);
+    }
+    return VersionedPtr((*factory)(), epoch);
+  }
+
+  void retire(_Ptr &&ptr) {
+    pool.push_back(Retired(ptr.get(), global_e->load()));
+  }
+
+ private:
+  class Retired {
+   public:
+    Retired(T *ptr, uint64_t version)
+        : ptr(std::unique_ptr<T>(ptr)), version(version) {}
+    std::unique_ptr<T> ptr;
+    uint64_t version;
+  };
+
+  std::atomic<uint64_t> *global_e;
+  std::vector<Retired> pool;
+  Factory *factory;
+};
+
+template <typename T, typename Factory = DefaultFactory<T>>
+class HazVersions {
+  static_assert(std::is_invocable_r_v<T *, Factory>,
+                "Factory must return a pointer to a T");
+  using _Pool = VersionPool<T, Factory>;
+
+ private:
+  ThreadStack<_Pool> thread_stack;
+  std::unique_ptr<Factory> factory;
+
+ public:
+  std::atomic<uint64_t> global_e;
+  HazVersions() : factory(std::make_unique<Factory>()) {}
+  HazVersions(std::unique_ptr<Factory> factory) : factory(std::move(factory)) {}
+  _Pool *begin() {
+    auto e = thread_stack.pop();
+    if (e == nullptr) {
+      return new VersionPool<T, Factory>(&global_e, factory.get());
+    }
+    return e;
+  }
+
+  void end(_Pool *e) { thread_stack.push(e); }
+};
+
+}  // namespace haz_ptrs

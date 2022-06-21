@@ -4,9 +4,11 @@
 
 #include "haz_ptr.hpp"
 
-static void BM_HazPtr(benchmark::State &state) {
+using namespace haz_ptrs;
+
+static const int kNumItems = 100'000;
+static void BM_EBR(benchmark::State &state) {
   static HazEpochs<int> *epocher;
-  static const int kNumItems = 100'000;
   if (state.thread_index() == 0) {
     epocher = new HazEpochs<int>(64);
   }
@@ -29,8 +31,36 @@ static void BM_HazPtr(benchmark::State &state) {
   state.SetItemsProcessed(kNumItems * i * state.threads());
 }
 
+static void BM_VBR(benchmark::State &state) {
+  static HazVersions<int> *versions;
+  if (state.thread_index() == 0) {
+    versions = new HazVersions<int>();
+  }
+  int i = 0;
+  for (auto _ : state) {
+    auto allocator = versions->begin();
+    state.PauseTiming();
+    VersionedPtr<int> *ints =
+        (VersionedPtr<int> *)calloc(kNumItems, sizeof(VersionedPtr<int>));
+
+    for (int i = 0; i < kNumItems; i++) {
+      auto val = allocator->allocate();
+      ints[i] = std::move(val);
+    }
+    state.ResumeTiming();
+    for (int i = 0; i < kNumItems; i++) {
+      allocator->retire(std::move(ints[i]));
+    }
+    versions->end(allocator);
+    i++;
+  }
+  state.SetItemsProcessed(kNumItems * i * state.threads());
+  if (state.thread_index() == 0) {
+    delete versions;
+  }
+}
+
 static void BM_Instant(benchmark::State &state) {
-  static const int kNumItems = 100'000;
   int i = 0;
   for (auto _ : state) {
     state.PauseTiming();
@@ -48,7 +78,8 @@ static void BM_Instant(benchmark::State &state) {
   state.SetItemsProcessed(kNumItems * i * state.threads());
 }
 
-BENCHMARK(BM_HazPtr)->ThreadRange(1, 6);
+BENCHMARK(BM_EBR)->ThreadRange(1, 6);
+BENCHMARK(BM_VBR)->ThreadRange(1, 6);
 BENCHMARK(BM_Instant)->ThreadRange(1, 6);
 
 BENCHMARK_MAIN();
