@@ -231,12 +231,14 @@ class HazEpochs : public MinEpoch {
 
 template <typename T>
 class VersionedPtr {
+  using _Ptr = VersionedPtr<T>;
+
  public:
   VersionedPtr(T *ptr, uint64_t version) {
     versionPtr.store((((__int128_t)ptr) << 64) | ((__int128_t)version));
   }
   VersionedPtr() { versionPtr.store(0); }
-  VersionedPtr(VersionedPtr<T> &&other) {
+  VersionedPtr(_Ptr &&other) {
     versionPtr.store(other.versionPtr);
     other.versionPtr.store(0);
   }
@@ -246,18 +248,18 @@ class VersionedPtr {
     return *this;
   }
 
-  bool replace(VersionedPtr<T> &ptr) {
+  std::pair<bool, _Ptr> replace(_Ptr &ptr) {
     __int128_t old = versionPtr.load();
     if (versionPtr.compare_exchange_weak(old, ptr.versionPtr.load())) {
-      ptr.versionPtr.store(old);
-      return true;
+      return std::make_pair(true, _Ptr(old));
     }
-    return false;
+    return std::make_pair(false, _Ptr(old));
   }
 
   T *get() { return load().first; }
 
  private:
+  VersionedPtr(__int128_t i) { versionPtr.store(i); }
   std::pair<T *, uint64_t> load() {
     auto v = versionPtr.load();
     return std::make_pair((T *)((uintptr_t)(v >> 64)), v & kVersionMask);

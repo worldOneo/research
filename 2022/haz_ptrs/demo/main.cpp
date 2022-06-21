@@ -39,6 +39,7 @@ int main() {
   auto version = versioner->begin();
   for (int i = 0; i < 10000; i++) {
     auto str = version->allocate();
+    str.replace(str);
     // std::cout << "version: " << str.get() << std::endl;
     version->retire(std::move(str));
   }
