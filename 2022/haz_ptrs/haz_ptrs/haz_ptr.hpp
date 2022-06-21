@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include <atomic>
+#include <functional>
 #include <list>
 #include <thread>
 #include <vector>
@@ -28,20 +29,43 @@ struct DefaultDeleter {
   }
 };
 
+struct DefaultFactory {
+  template <typename T>
+  T *operator()() {
+    return new T;
+  }
+};
+
 template <typename T, typename Deleter>
 class Retired {
  public:
   T *ptr;
   uint64_t retired_at;
-  Deleter deleter;
+  Deleter *deleter;
 
   ~Retired() {
     if (ptr) {
-      deleter(ptr);
+      (*deleter)(ptr);
     }
   };
-  Retired(T *ptr, uint64_t retired_at, Deleter deleter)
+  Retired(T *ptr, uint64_t retired_at, Deleter *deleter)
       : ptr(ptr), retired_at(retired_at), deleter(deleter) {}
+  Retired(const Retired &) = delete;
+  Retired &operator=(const Retired &) = delete;
+  Retired(Retired &&other)
+      : ptr(other.ptr), retired_at(other.retired_at), deleter(other.deleter) {
+    other.ptr = nullptr;
+  }
+  Retired &operator=(Retired &&other) {
+    if (ptr) {
+      (*deleter)(ptr);
+    }
+    ptr = other.ptr;
+    retired_at = other.retired_at;
+    deleter = other.deleter;
+    other.ptr = nullptr;
+    return *this;
+  }
 };
 
 static const uint64_t kNoEpoch = (uint64_t)~0;
@@ -69,9 +93,8 @@ class Cleaner {
   }
   void enter() { my_e->store(global_e->load()); }
   void exit() { my_e->store(kNoEpoch); }
-  void retire(const T *ptr) {
-    auto retired = std::make_unique<Retired<const T, Deleter>>(
-        ptr, global_e->load(), deleter);
+  void retire(T *ptr) {
+    auto retired = Retired<T, Deleter>(ptr, global_e->load(), &deleter);
     retired_ptrs.push_back(std::move(retired));
     counter++;
     if (counter % kEpochFreq == 0) {
@@ -90,17 +113,15 @@ class Cleaner {
       return;
     }
 
-    auto predicate =
-        [min_epoch_val](
-            const std::unique_ptr<Retired<const T, Deleter>> &retired) {
-          return retired->retired_at < min_epoch_val;
-        };
+    auto predicate = [min_epoch_val](const Retired<T, Deleter> &retired) {
+      return retired.retired_at < min_epoch_val;
+    };
     // remove all items from vectore where predicate is true
     retired_ptrs.erase(
         std::remove_if(retired_ptrs.begin(), retired_ptrs.end(), predicate),
         retired_ptrs.end());
   }
-  std::vector<std::unique_ptr<Retired<const T, Deleter>>> retired_ptrs;
+  std::vector<Retired<T, Deleter>> retired_ptrs;
   atom_cnt *my_e;
   atom_cnt *global_e;
   MinEpoch *min_epoch;
