@@ -291,7 +291,7 @@ class VersionPool {
   using _Ptr = VersionedPtr<T>;
 
  public:
-  VersionPool(std::atomic<uint64_t> *global_e, Factory *factory = new Factory())
+  VersionPool(std::atomic<uint64_t> *global_e, Factory *factory)
       : global_e(global_e), factory(factory) {}
 
   VersionedReader begin() { return VersionedReader(global_e); }
