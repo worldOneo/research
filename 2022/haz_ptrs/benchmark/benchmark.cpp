@@ -51,6 +51,7 @@ static void BM_VBR(benchmark::State &state) {
     for (int i = 0; i < kNumItems; i++) {
       allocator->retire(std::move(ints[i]));
     }
+    delete ints;
     versions->end(allocator);
     i++;
   }

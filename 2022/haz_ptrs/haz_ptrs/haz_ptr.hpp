@@ -71,7 +71,8 @@ class Retired {
 };
 
 static const uint64_t kNoEpoch = (uint64_t)~0;
-static const uint64_t kEpochFreq = 100;
+static const uint64_t kCounterFreq = 16;
+static const uint64_t kEpochFreq = 8;
 
 class MinEpoch {
  public:
@@ -99,7 +100,7 @@ class Cleaner {
     auto retired = Retired<T, Deleter>(ptr, global_e->load(), deleter);
     retired_ptrs.push_back(std::move(retired));
     counter++;
-    if (counter % kEpochFreq == 0) {
+    if (counter % kCounterFreq == 0) {
       global_e->fetch_add(1);
     }
     if (retired_ptrs.size() % kEpochFreq == 0) {
