@@ -1,5 +1,6 @@
 #include <benchmark/benchmark.h>
 
+#include <optional>
 #include <string>
 
 #include "haz_ptr.hpp"
@@ -17,10 +18,10 @@ static void BM_EBR(benchmark::State &state) {
     auto cleaner = epocher->begin();
     state.PauseTiming();
     int **ints = (int **)calloc(kNumItems, sizeof(int *));
+    state.ResumeTiming();
     for (int j = 0; j < kNumItems; j++) {
       ints[j] = new int(j);
     }
-    state.ResumeTiming();
     for (int i = 0; i < kNumItems; i++) {
       cleaner->retire(ints[i]);
     }
@@ -43,13 +44,13 @@ static void BM_VBR(benchmark::State &state) {
     VersionedPtr<int> *ints =
         (VersionedPtr<int> *)calloc(kNumItems, sizeof(VersionedPtr<int>));
 
-    for (int i = 0; i < kNumItems; i++) {
-      auto val = allocator->allocate();
-      ints[i] = std::move(val);
-    }
     state.ResumeTiming();
     for (int i = 0; i < kNumItems; i++) {
-      allocator->retire(std::move(ints[i]));
+      auto val = allocator->allocate();
+      ints[i].replace(0, val);  // = std::move(val);
+    }
+    for (int i = 0; i < kNumItems; i++) {
+      allocator->retire(&ints[i]);
     }
     delete ints;
     versions->end(allocator);
@@ -66,10 +67,10 @@ static void BM_Instant(benchmark::State &state) {
   for (auto _ : state) {
     state.PauseTiming();
     int **ints = (int **)calloc(kNumItems, sizeof(int *));
+    state.ResumeTiming();
     for (int i = 0; i < kNumItems; i++) {
       ints[i] = new int(i);
     }
-    state.ResumeTiming();
     for (int i = 0; i < kNumItems; i++) {
       delete ints[i];
     }

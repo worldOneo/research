@@ -31,10 +31,10 @@ struct DefaultDeleter {
 
 template <typename T>
 struct DefaultFactory {
-  T *operator()() {
+  T operator()() {
     static_assert(std::is_default_constructible<T>::value,
                   "T must be default constructible for DefaultFactory");
-    return new T;
+    return T();
   }
 };
 
@@ -231,11 +231,27 @@ class HazEpochs : public MinEpoch {
 };
 
 template <typename T>
+class VersionedNode {
+ private:
+  std::atomic_uint64_t birth;
+  T data;
+
+ public:
+  VersionedNode(uint64_t epoch, T &&data) : data(std::move(data)) {
+    birth.store(epoch);
+  }
+
+  void allocate(uint64_t epoch) { birth.store(epoch); }
+
+  T *get() { return &data; }
+};
+
+template <typename T>
 class VersionedPtr {
   using _Ptr = VersionedPtr<T>;
 
  public:
-  VersionedPtr(T *ptr, uint64_t version) {
+  VersionedPtr(VersionedNode<T> *ptr, uint64_t version) {
     versionPtr.store((((__int128_t)ptr) << 64) | ((__int128_t)version));
   }
   VersionedPtr() { versionPtr.store(0); }
@@ -243,31 +259,60 @@ class VersionedPtr {
     versionPtr.store(other.versionPtr);
     other.versionPtr.store(0);
   }
-  VersionedPtr<T> &operator=(VersionedPtr<T> &&other) {
+  /*VersionedPtr<T> &operator=(VersionedPtr<T> &&other) {
     versionPtr.store(other.versionPtr);
     other.versionPtr.store(0);
     return *this;
+  }*/
+
+  std::pair<bool, _Ptr> replace(__int128_t old, _Ptr &ptr) {
+    return std::make_pair<bool, _Ptr>(
+        versionPtr.compare_exchange_strong(old, ptr.versionPtr.load()),
+        _Ptr(old));
   }
 
-  std::pair<bool, _Ptr> replace(_Ptr &ptr) {
-    __int128_t old = versionPtr.load();
-    if (versionPtr.compare_exchange_weak(old, ptr.versionPtr.load())) {
-      return std::make_pair(true, _Ptr(old));
+  bool mark(__int128_t old) {
+    if (old & kMarker) {
+      return true;
     }
-    return std::make_pair(false, _Ptr(old));
+    __int128_t n = old | kMarker;
+    return versionPtr.compare_exchange_strong(old, n);
+  };
+
+  _Ptr take() { return _Ptr(versionPtr.load()); }
+
+  bool clear(__int128_t old) {
+    return versionPtr.compare_exchange_strong(old, 0);
   }
 
-  T *get() { return load().first; }
+  std::pair<T *, __int128_t> load() const {
+    auto v = versionPtr.load() & kHideMarker;
+    VersionedNode<T> *data = ((VersionedNode<T> *)((uintptr_t)(v >> 64)));
+    if (data == nullptr) {
+      return std::make_pair(nullptr, v);
+    }
+    return std::make_pair(data->get(), v);
+  }
+
+  std::pair<VersionedNode<T> *, __int128_t> load_r() const {
+    auto v = versionPtr.load() & kHideMarker;
+    VersionedNode<T> *data = ((VersionedNode<T> *)((uintptr_t)(v >> 64)));
+    return std::make_pair(data, v);
+  }
+  T *get() const { return load().first; }
+  VersionedNode<T> *get_r() const { return load_r().first; }
 
  private:
   VersionedPtr(__int128_t i) { versionPtr.store(i); }
-  std::pair<T *, uint64_t> load() {
-    auto v = versionPtr.load();
-    return std::make_pair((T *)((uintptr_t)(v >> 64)), v & kVersionMask);
-  }
+  // [64-Bit Pointer][1-Bit Marker][63-Bit Version] = 128
   std::atomic<__int128_t> versionPtr{0};
-  static const __int128_t kVersionMask = (~(__int128_t)0) >> 64;
+  static const __int128_t kVersionMask = (~(__int128_t)0) >> 63;
+  static const __int128_t kMarker = ((__int128_t)1) << 63;
+  static const __int128_t kHideMarker = (~((__int128_t)0)) ^ kMarker;
 };
+
+template <typename T>
+static constexpr VersionedPtr<T> vnull = VersionedPtr<T>();
 
 class VersionedReader {
  public:
@@ -287,15 +332,15 @@ class VersionedReader {
 
 template <typename T, typename Factory>
 class VersionPool {
-  static_assert(std::is_invocable_r_v<T *, Factory>,
+  static_assert(std::is_invocable_r_v<T, Factory>,
                 "Factory must return a pointer to a T");
   using _Ptr = VersionedPtr<T>;
+  using _T = VersionedNode<T>;
 
  public:
   VersionPool(std::atomic<uint64_t> *global_e, Factory *factory)
       : global_e(global_e), factory(factory) {}
 
-  VersionedReader begin() { return VersionedReader(global_e); }
   _Ptr allocate() {
     uint64_t epoch = global_e->load();
     if (!pool.empty()) {
@@ -307,19 +352,19 @@ class VersionPool {
       }
       return VersionedPtr(ptr.ptr.release(), epoch);
     }
-    return VersionedPtr((*factory)(), epoch);
+    return VersionedPtr(new VersionedNode(epoch, (*factory)()), epoch);
   }
 
-  void retire(_Ptr &&ptr) {
-    pool.push_back(Retired(ptr.get(), global_e->load()));
+  void retire(_Ptr *ptr) {
+    pool.push_back(Retired(ptr->get_r(), global_e->load()));
   }
 
  private:
   class Retired {
    public:
-    Retired(T *ptr, uint64_t version)
-        : ptr(std::unique_ptr<T>(ptr)), version(version) {}
-    std::unique_ptr<T> ptr;
+    Retired(_T *ptr, uint64_t version)
+        : ptr(std::unique_ptr<_T>(ptr)), version(version) {}
+    std::unique_ptr<_T> ptr;
     uint64_t version;
   };
 
@@ -330,7 +375,7 @@ class VersionPool {
 
 template <typename T, typename Factory = DefaultFactory<T>>
 class HazVersions {
-  static_assert(std::is_invocable_r_v<T *, Factory>,
+  static_assert(std::is_invocable_r_v<T, Factory>,
                 "Factory must return a pointer to a T");
   using _Pool = VersionPool<T, Factory>;
 
@@ -351,6 +396,7 @@ class HazVersions {
   }
 
   void end(_Pool *e) { thread_stack.push(e); }
+  VersionedReader read() { return VersionedReader(&global_e); }
 };
 
 }  // namespace haz_ptrs
