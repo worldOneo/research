@@ -177,11 +177,16 @@ export class OctTree {
   /**
    * @param {Cube} query
    */
-  query(query, res = { items: [], finished: false }, fast = false) {
+  query(
+    query,
+    res = { items: [], finished: false, maxJmpSize: Infinity },
+    fast = false
+  ) {
     if (!cubesIntersect(this._cube, query)) {
       return res.items;
     }
 
+    res.maxJmpSize = Math.min(res.maxJmpSize, this._cube.w);
     res.items.push(...this._items);
     if (this._contained && fast) {
       res.finished = true;
