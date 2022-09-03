@@ -30,7 +30,7 @@ for (let i = 0; i < 600; i++) {
       if (res[1] < end) {
         break;
       }
-      pos.add(dir.x, dir.y, dir.z, res[1]);
+      pos.add(dir.x, dir.y, dir.z, res[1]); // Needs DDA to avoid overstepping
     }
     let level = (1 / (pos.length / 50) ** 2) * 255;
     ctx.fillStyle = `rgba(${level},${level}, ${level}, 255)`;
