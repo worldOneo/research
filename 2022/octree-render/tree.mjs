@@ -1,3 +1,5 @@
+import { Vector } from "./ray.mjs";
+
 /**
  * @param {Cube} a
  * @param {Cube} b
@@ -42,6 +44,24 @@ export class Cube {
       z > this.z + this.l
     );
   }
+
+  distanceTo(x, y, z) {
+    // let ax = x - this.x;
+    // let ay = y - this.y;
+    // let az = z - this.z;
+    // let displacement = Math.sin(10 * x) * 0.25;
+
+    let w2 = this.w / 2;
+    let h2 = this.h / 2;
+    let l2 = this.l / 2;
+
+    let dx = Math.max(this.x - x, 0); //- w2;
+    let dy = Math.max(this.y - y, 0); // - h2;
+    let dz = Math.max(this.z - z, 0); // - l2;
+
+    return Math.sqrt(dx ** 2 + dy ** 2 + dz ** 2);
+    // return Math.sqrt(ax ** 2 + ay ** 2 + az ** 2) - this.w + displacement;
+  }
 }
 
 /**
@@ -60,7 +80,7 @@ export class Cube {
 export class OmniOctTree {
   static options = [];
   constructor() {
-    this._base = new Cube(0, 0, 0, 10, 10, 10);
+    this._base = new Cube(-10_000, -10_000, -10_000, 20_000, 20_000, 20_000);
     this._oct = new OctTree(this._base);
   }
 
@@ -79,6 +99,13 @@ export class OmniOctTree {
    */
   query(cube) {
     return this._oct.query(cube);
+  }
+
+  /**
+   *
+   */
+  findClosest(x, y, z) {
+    return this._oct.findClosest(x, y, z);
   }
 
   /**
@@ -133,6 +160,7 @@ export class OctTree {
     this._cube = cube;
     this._capacity = capacity;
     this._children = null;
+    /** @type {Array<Cube>} */
     this._items = [];
     this._split = false;
     this._contained = false;
@@ -147,11 +175,6 @@ export class OctTree {
     }
 
     if (this._split) {
-      if (cube.containsCube(this._cube)) {
-        this._contained = true;
-        this._items.push(cube);
-        return;
-      }
       for (let child of this._children) {
         child.insert(cube);
       }
@@ -162,16 +185,43 @@ export class OctTree {
       return;
     }
     this._Split();
-    let items = [];
-    for (let item of this._items) {
-      if (item.containsCube(this._cube)) {
-        this._contained = true;
-        items.push(item);
-        continue;
-      }
-      this.insert(item);
+  }
+
+  /**
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   * @return {[Cube, number]}
+   */
+  findClosest(x, y, z) {
+    if (!this._cube.containsPoint(x, y, z)) {
+      return null;
     }
-    this._items = items;
+    let d = Infinity;
+    let min = null;
+    if (this._split) {
+      for (let child of this._children) {
+        let r = child.findClosest(x, y, z);
+        if (r == null) continue;
+        let [_min, _d] = r;
+        if (d > _d) {
+          min = _min;
+          d = _d;
+        }
+      }
+    }
+
+    for (let item of this._items) {
+      let _d = item.distanceTo(x, y, z);
+      if (d > _d) {
+        d = _d;
+        min = item;
+      }
+    }
+    if (min !== null) {
+      return [min, d];
+    }
+    return null;
   }
 
   /**
