@@ -13,7 +13,7 @@ const r = (m, i) => Math.random() * (m - i) + i;
 const rw = () => r(-400, 400);
 
 //tree.insert(new Cube(0, 0, 200, 100, 100, 100));
-tree.insert(new Cube(4, 5, 10, 100, 100, 100));
+tree.insert(new Cube(24, 24, 50, 20, 20, 20));
 //tree.insert(new Cube(0, 10, 200, 5, 4, 4));
 console.log(tree, tree.findClosest(0, 0, 0));
 
@@ -32,7 +32,7 @@ for (let i = 0; i < 600; i++) {
       }
       pos.add(dir.x, dir.y, dir.z, res[1]);
     }
-    let level = (1 / (pos.length / 10) ** 2) * 255;
+    let level = (1 / (pos.length / 50) ** 2) * 255;
     ctx.fillStyle = `rgba(${level},${level}, ${level}, 255)`;
     ctx.fillRect(i, j, 1, 1);
     ok = true;

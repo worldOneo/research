@@ -50,17 +50,13 @@ export class Cube {
     // let ay = y - this.y;
     // let az = z - this.z;
     // let displacement = Math.sin(10 * x) * 0.25;
+    // return Math.sqrt(ax ** 2 + ay ** 2 + az ** 2) - this.w + displacement;
 
-    let w2 = this.w / 2;
-    let h2 = this.h / 2;
-    let l2 = this.l / 2;
-
-    let dx = Math.max(this.x - x, 0); //- w2;
-    let dy = Math.max(this.y - y, 0); // - h2;
-    let dz = Math.max(this.z - z, 0); // - l2;
+    let dx = Math.max(this.x - x, 0, x - (this.x + this.w)); //+ this.w);
+    let dy = Math.max(this.y - y, 0, y - (this.y + this.h));
+    let dz = Math.max(this.z - z, 0, z - (this.z + this.l));
 
     return Math.sqrt(dx ** 2 + dy ** 2 + dz ** 2);
-    // return Math.sqrt(ax ** 2 + ay ** 2 + az ** 2) - this.w + displacement;
   }
 }
 
