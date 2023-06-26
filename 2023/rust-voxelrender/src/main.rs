@@ -1,6 +1,6 @@
-use std::{path::Path, time::Instant};
+use std::{path::Path, thread, time::Instant};
 
-use image::{EncodableLayout, ImageBuffer, Rgb};
+use image::{ImageBuffer, Rgb};
 
 #[derive(Default, Debug, Clone, Copy)]
 struct Point {
@@ -149,8 +149,6 @@ impl Point {
     }
 }
 
-const OCTREE_CAPACITY: usize = 4;
-
 struct Octree {
     data: OctreeData,
     bounds: Cube,
@@ -225,37 +223,18 @@ impl Octree {
     }
 
     fn find_closest(&self, p: &Vec3, dir: &Vec3) -> (Option<Point>, f64) {
-        if !self.bounds.containsf(&p) {
-            return (None, f64::MAX);
-        }
-
-        let mut voxel = None;
-        let mut dist = f64::MAX;
-
         match &self.data {
             OctreeData::Split(subtrees) => {
                 let tree = &subtrees[self.index_of(p)];
-                let (v, d) = tree.find_closest(p, dir);
-                if d < dist {
-                    voxel = v;
-                    dist = d;
-                }
+                return tree.find_closest(p, dir);
             }
             OctreeData::Voxel => {
-                dist = 0.;
-                voxel = Some(self.bounds.pos);
+                return (Some(self.bounds.pos), 0.);
             }
             OctreeData::Empty => {
                 return (None, self.bounds.max_marchable_distance(p, dir));
             }
         }
-        if dist > self.bounds.size as f64 {
-            let march_dist = self.bounds.max_marchable_distance(p, dir);
-            if dist > march_dist {
-                return (None, march_dist);
-            }
-        }
-        return (voxel, dist);
     }
 }
 
@@ -264,25 +243,20 @@ const MAX_DISTANCE: f64 = 100.;
 const MIN_DISTANCE: f64 = 0.0001;
 const PUSH_ANALAYZE_DISTANCE: f64 = 0.000000001;
 
-fn main() {
-    let mut tree = Octree::new(Cube::new(-1, -1, -1, 128));
-
-    tree.insert(Point::new(5, 5, 10));
-    tree.insert(Point::new(5, 6, 10));
-    tree.insert(Point::new(5, 5, 9));
-    for x in 3..8 {
-        for z in 5..12 {
-            tree.insert(Point::new(x, 7, z));
-        }
-    }
-    let now = Instant::now();
-    let mut buffer = ImageBuffer::new(600, 600);
-    for i in 0..600 {
-        for j in 0..600 {
+fn render(buf: &mut [u16], w: u32, h: u32, workers: u32, worker: u32, tree: &Octree) {
+    let unit = w / workers;
+    let start = unit * worker;
+    let stop = (worker + 1) * unit;
+    let mut px = 0;
+    for i in (start)..(stop) {
+        for j in 0..h {
             let mut pos = Vec3::new(0., 0., 0.);
             let dir = Vec3::new(i as f64, j as f64, 600.).normalized();
             let mut voxel = None;
             for _ in 0..MAX_SAMPLE_STEPS {
+                if !tree.bounds.containsf(&pos) {
+                    break;
+                }
                 let (v, d) = tree.find_closest(&pos, &dir);
                 if let Some(v) = v {
                     voxel = Some(v);
@@ -299,8 +273,43 @@ fn main() {
             }
             if let Some(_) = voxel {
                 let level = ((1. / (pos.len() as f64 / 7.)).powi(2) * 65536.) as u16;
-                buffer.put_pixel(i, j, Rgb([level, level, level]));
+                buf[px] = level;
             }
+            px += 1;
+        }
+    }
+}
+
+fn main() {
+    let mut tree = Octree::new(Cube::new(-1, -1, -1, 128));
+
+    tree.insert(Point::new(5, 5, 10));
+    tree.insert(Point::new(5, 6, 10));
+    tree.insert(Point::new(5, 5, 9));
+    for x in 0..30 {
+        for z in 5..50 {
+            tree.insert(Point::new(x, 7, z));
+        }
+    }
+    let now = Instant::now();
+    let mut buffer = ImageBuffer::new(600, 600);
+    let mut data = Box::new([0 as u16; 600 * 600]);
+    let thread_count = 12;
+    let chunks = data.chunks_mut((600 / thread_count) * 600);
+    let treeref = &tree;
+    thread::scope(|s| {
+        chunks
+            .enumerate()
+            .for_each(|(i, d)| {
+                s.spawn(move || render(d, 600, 600, thread_count as u32, i as u32, treeref));
+            })
+    });
+    println!("Elapsed: {:.2?}", now.elapsed());
+    
+    for i in 0..600 {
+        for j in 0..600 {
+            let gray = data[(600 * i + j) as usize];
+            buffer.put_pixel(i, j, Rgb([gray, gray, gray]));
         }
     }
     let elapsed = now.elapsed();
