@@ -100,8 +100,8 @@ export class OmniOctTree {
   /**
    *
    */
-  findClosest(x, y, z) {
-    return this._oct.findClosest(x, y, z);
+  findClosest(x, y, z, r) {
+    return this._oct.findClosest(x, y, z, r);
   }
 
   /**
@@ -147,6 +147,17 @@ export class OmniOctTree {
   }
 }
 
+export class FindResult {
+  /**
+   * @param {Cube} cube
+   * @param {Number} distance
+   */
+  constructor(cube, distance) {
+    this.cube = cube;
+    this.distance = distance;
+  }
+}
+
 export class OctTree {
   /**
    * @param {Cube} cube
@@ -167,57 +178,60 @@ export class OctTree {
    */
   insert(cube) {
     if (!cubesIntersect(this._cube, cube)) {
-      return;
+      return false;
     }
 
     if (this._split) {
+      let insert = false;
       for (let child of this._children) {
-        child.insert(cube);
+        insert |= child.insert(cube);
       }
-      return;
+      return insert;
     }
     this._items.push(cube);
-    if (this._items.length < this._capacity) {
-      return;
+    if (this._items.length > this._capacity) {
+      this._Split();
     }
-    this._Split();
+    return true;
   }
 
   /**
    * @param {number} x
    * @param {number} y
    * @param {number} z
-   * @return {[Cube, number]}
+   * @param {number} dist
+   * @param {FindResult} r
    */
-  findClosest(x, y, z) {
-    if (!this._cube.containsPoint(x, y, z)) {
-      return null;
+  findClosest(x, y, z, dist, r) {
+    if (this._cube.distanceTo(x, y, z) > dist) {
+      return false;
     }
-    let d = Infinity;
+    let d = dist;
     let min = null;
     if (this._split) {
       for (let child of this._children) {
-        let r = child.findClosest(x, y, z);
-        if (r == null) continue;
-        let [_min, _d] = r;
+        if (!child.findClosest(x, y, z, d, r)) continue;
+        if (d > r.distance) {
+          min = r.cube;
+          d = r.distance;
+        }
+      }
+    } else {
+      for (let item of this._items) {
+        let _d = item.distanceTo(x, y, z);
         if (d > _d) {
-          min = _min;
           d = _d;
+          min = item;
         }
       }
     }
 
-    for (let item of this._items) {
-      let _d = item.distanceTo(x, y, z);
-      if (d > _d) {
-        d = _d;
-        min = item;
-      }
-    }
     if (min !== null) {
-      return [min, d];
+      r.cube = min;
+      r.distance = d;
+      return true;
     }
-    return null;
+    return false;
   }
 
   /**
@@ -276,5 +290,13 @@ export class OctTree {
       new OctTree(new Cube(x, y + h2, z + l2, w2, h2, l2), c),
       new OctTree(new Cube(x + w2, y + h2, z + l2, w2, h2, l2), c),
     ];
+    
+    for(let item of this._items) {
+      let insert = 0;
+      for (let children of this._children) {
+        insert += children.insert(item) | 0;
+      }
+    }
+    this._items = null;
   }
 }
