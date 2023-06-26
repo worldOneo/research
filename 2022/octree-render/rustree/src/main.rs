@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, time::Instant};
 
 use image::{EncodableLayout, ImageBuffer, Rgb};
 
@@ -9,6 +9,7 @@ struct Point {
     pub z: i64,
 }
 
+#[derive(Debug, Clone, Copy)]
 struct Vec3 {
     pub x: f64,
     pub y: f64,
@@ -55,20 +56,23 @@ impl Vec3 {
 
 #[derive(Debug)]
 struct Cube {
-    pub pos: Point,
-    pub size: i64,
+    pos: Point,
+    fpos: Vec3,
+    size: i64,
 }
 
 impl Cube {
     fn new(x: i64, y: i64, z: i64, size: i64) -> Cube {
+        let p = Point::new(x, y, z);
         Cube {
-            pos: Point::new(x, y, z),
+            pos: p,
+            fpos: p.to_vec3(),
             size,
         }
     }
 
     fn distance_to(&self, p: &Vec3) -> f64 {
-        let pos = self.pos.to_vec3();
+        let pos = self.fpos;
         let s = self.size as f64;
         let dx = (pos.x - p.x).max(p.x - (pos.x + s)).max(0.);
         let dy = (pos.y - p.y).max(p.y - (pos.y + s)).max(0.);
@@ -78,7 +82,7 @@ impl Cube {
     }
 
     fn containsf(&self, p: &Vec3) -> bool {
-        let pos = self.pos.to_vec3();
+        let pos = self.fpos;
         let size = self.size as f64;
 
         !(pos.x > p.x
@@ -99,7 +103,7 @@ impl Cube {
     }
 
     fn max_marchable_distance(&self, p: &Vec3, d: &Vec3) -> f64 {
-        let bpos = self.pos.to_vec3();
+        let bpos = self.fpos;
         let size = self.size as f64;
         let dx = if d.x > 0. {
             bpos.x + size - p.x
@@ -189,38 +193,52 @@ impl Octree {
     fn split(&mut self) {
         let Cube {
             pos: Point { x, y, z },
+            fpos: _,
             size,
         } = self.bounds;
         let n = size / 2;
         self.data = OctreeData::Split(Box::new([
             Self::new(Cube::new(x + 0, y + 0, z + 0, n)),
-            Self::new(Cube::new(x + 0, y + n, z + 0, n)),
-            Self::new(Cube::new(x + n, y + 0, z + 0, n)),
-            Self::new(Cube::new(x + n, y + n, z + 0, n)),
-            // Bottom
             Self::new(Cube::new(x + 0, y + 0, z + n, n)),
+            Self::new(Cube::new(x + 0, y + n, z + 0, n)),
             Self::new(Cube::new(x + 0, y + n, z + n, n)),
+            Self::new(Cube::new(x + n, y + 0, z + 0, n)),
             Self::new(Cube::new(x + n, y + 0, z + n, n)),
+            Self::new(Cube::new(x + n, y + n, z + 0, n)),
             Self::new(Cube::new(x + n, y + n, z + n, n)),
         ]));
     }
 
-    fn find_closest(&self, p: &Vec3, dir: &Vec3, closest: f64) -> (Option<Point>, f64) {
+    fn index_of(&self, p: &Vec3) -> usize {
+        let hs = self.bounds.size as f64 * 0.5;
+        let mut idx = 0;
+        if p.x > self.bounds.fpos.x + hs {
+            idx |= 0b100;
+        }
+        if p.y > self.bounds.fpos.y + hs {
+            idx |= 0b010;
+        }
+        if p.z > self.bounds.fpos.z + hs {
+            idx |= 0b001;
+        }
+        idx
+    }
+
+    fn find_closest(&self, p: &Vec3, dir: &Vec3) -> (Option<Point>, f64) {
         if !self.bounds.containsf(&p) {
             return (None, f64::MAX);
         }
-        let march_dist = self.bounds.max_marchable_distance(p, dir);
+
         let mut voxel = None;
-        let mut dist = march_dist;
+        let mut dist = f64::MAX;
 
         match &self.data {
             OctreeData::Split(subtrees) => {
-                for tree in subtrees.iter() {
-                    let (v, d) = tree.find_closest(p, dir, dist);
-                    if d < dist {
-                        voxel = v;
-                        dist = d;
-                    }
+                let tree = &subtrees[self.index_of(p)];
+                let (v, d) = tree.find_closest(p, dir);
+                if d < dist {
+                    voxel = v;
+                    dist = d;
                 }
             }
             OctreeData::Voxel => {
@@ -228,6 +246,12 @@ impl Octree {
                 voxel = Some(self.bounds.pos);
             }
             OctreeData::Empty => {
+                return (None, self.bounds.max_marchable_distance(p, dir));
+            }
+        }
+        if dist > self.bounds.size as f64 {
+            let march_dist = self.bounds.max_marchable_distance(p, dir);
+            if dist > march_dist {
                 return (None, march_dist);
             }
         }
@@ -235,7 +259,7 @@ impl Octree {
     }
 }
 
-const MAX_SAMPLE_STEPS: usize = 10;
+const MAX_SAMPLE_STEPS: usize = 1000;
 const MAX_DISTANCE: f64 = 100.;
 const MIN_DISTANCE: f64 = 0.0001;
 const PUSH_ANALAYZE_DISTANCE: f64 = 0.000000001;
@@ -244,14 +268,14 @@ fn main() {
     let mut tree = Octree::new(Cube::new(-1, -1, -1, 128));
 
     tree.insert(Point::new(5, 5, 10));
-    tree.insert(Point::new(5, 4, 10));
+    tree.insert(Point::new(5, 6, 10));
     tree.insert(Point::new(5, 5, 9));
     for x in 3..8 {
         for z in 5..12 {
             tree.insert(Point::new(x, 7, z));
         }
     }
-
+    let now = Instant::now();
     let mut buffer = ImageBuffer::new(600, 600);
     for i in 0..600 {
         for j in 0..600 {
@@ -259,7 +283,7 @@ fn main() {
             let dir = Vec3::new(i as f64, j as f64, 600.).normalized();
             let mut voxel = None;
             for _ in 0..MAX_SAMPLE_STEPS {
-                let (v, d) = tree.find_closest(&pos, &dir, f64::MAX);
+                let (v, d) = tree.find_closest(&pos, &dir);
                 if let Some(v) = v {
                     voxel = Some(v);
                     break;
@@ -274,10 +298,12 @@ fn main() {
                 }
             }
             if let Some(_) = voxel {
-                let level = ((1. / (pos.len() as f64 / 5.)).powf(2.) * 65536.) as u16;
+                let level = ((1. / (pos.len() as f64 / 7.)).powi(2) * 65536.) as u16;
                 buffer.put_pixel(i, j, Rgb([level, level, level]));
             }
         }
     }
+    let elapsed = now.elapsed();
+    println!("Elapsed: {:.2?}", elapsed);
     buffer.save(&Path::new("out.png")).unwrap();
 }
