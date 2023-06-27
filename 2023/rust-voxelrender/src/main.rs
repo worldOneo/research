@@ -71,6 +71,12 @@ impl Vec3 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
 
+    fn voxel_equals(&self, other: &Vec3) -> bool {
+        self.x.floor() == other.x.floor()
+            && self.y.floor() == other.y.floor()
+            && self.z.floor() == other.z.floor()
+    }
+
     fn prob_voxel_norm(&self, dir: &Vec3) -> Vec3 {
         let dir = dir.mulf(-1.);
         let voxel_position = Vec3::new(self.x.floor(), self.y.floor(), self.z.floor());
@@ -455,14 +461,12 @@ fn render(
     let mut px = 0;
     for i in (start)..(stop) {
         for j in 0..h {
-            let dir = Vec3::new(i as f64 + MIN_DISTANCE, j as f64 + MIN_DISTANCE, 600.).normalized();
+            let dir =
+                Vec3::new(i as f64 + MIN_DISTANCE, j as f64 + MIN_DISTANCE, 600.).normalized();
             let (voxel, solidpos) = cast_to_hit(camera, &dir, tree);
             if let Some(v) = voxel {
                 let voxpos = solidpos.clone();
                 let normal = solidpos.prob_voxel_norm(&dir);
-                if normal != Vec3::new(0., -1., 0.) {
-                    // println!("Normal: {:?}, Voxpos: {:?}, dir: {:?}", normal, voxpos, dir);
-                }
                 let albedo = color_to_f(&v.color);
                 let mut currentc = Vec3::new(0., 0., 0.);
                 let color = &mut currentc;
@@ -477,15 +481,10 @@ fn render(
                     if let None = lvoxel  {
                         panic!("\nBlocked: {:?} Light: {:?}\n Voxel: {:?}\n Dest: {:?}\n LPos: {:?}\n BPos: {:?}\n Start: {:?}\n Normal: {:?}\n Dir: {:?}\n", posmat.sub(&pos).len(), poslight.sub(&pos).len(), voxpos, dest, poslight, posmat, pos, normal, dir);
                     }
-                    if poslight.sub(&pos).len() < posmat.sub(&solidpos).len() {
+                    if poslight.voxel_equals(&dest) && poslight.sub(&pos).len() < posmat.sub(&solidpos).len() {
                         // color += e.emission * e.color * albedo * (normal \cdot dir)
                         *color =
                              color.add(&color_to_f(&e.color).mul(&albedo.mulf(normal.dot(&dir))).mulf(e.emission as f64 / 255.));
-                        // *color = Vec3::new(0., 255., 255.);
-                        // println!("Light hit: {:?} from {:?} to {:?}", e, pos, poslight);
-                        // println!("Norm: {:?}", normal);
-                    } else {
-                        // println!("Blocked: {:?} Light: {:?}\n LPos: {:?}\n BPos: {:?}\n Start: {:?}\n Normal: {:?}", posmat.sub(&pos).len(), poslight.sub(&pos).len(), poslight, posmat, pos, normal);
                     }
                 });
                 buf[px] = f_to_color(color);
