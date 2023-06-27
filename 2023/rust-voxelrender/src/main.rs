@@ -33,11 +33,23 @@ impl Vec3 {
         Vec3 {
             x: self.x - v.x,
             y: self.y - v.y,
-            z: self.y - v.z,
+            z: self.z - v.z,
         }
     }
 
-    fn mul(&self, s: f64) -> Vec3 {
+    fn mul(&self, v: &Vec3) -> Vec3 {
+        Vec3 {
+            x: self.x * v.x,
+            y: self.y * v.y,
+            z: self.z * v.z,
+        }
+    }
+
+    fn dot(&self, v: &Vec3) -> f64 {
+        self.x * v.x + self.y * v.y + self.z * v.z
+    }
+
+    fn mulf(&self, s: f64) -> Vec3 {
         Vec3 {
             x: self.x * s,
             y: self.y * s,
@@ -46,12 +58,45 @@ impl Vec3 {
     }
 
     fn normalized(&self) -> Vec3 {
-        self.mul(1. / self.len())
+        self.mulf(1. / self.len())
     }
 
     fn len(&self) -> f64 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
+
+    fn prob_voxel_norm(&self) -> Vec3 {
+        let min = self.x - self.x.floor();
+        let norm = Vec3::new(-1., 0., 0.);
+        let (min, norm) = min_or(
+            min,
+            self.x.floor() + 1. - self.x,
+            norm,
+            Vec3::new(1., 0., 0.),
+        );
+        let (min, norm) = min_or(min, self.y - self.y.floor(), norm, Vec3::new(0., -1., 0.));
+        let (min, norm) = min_or(
+            min,
+            self.y.floor() + 1. - self.y,
+            norm,
+            Vec3::new(0., 1., 0.),
+        );
+        let (min, norm) = min_or(min, self.z - self.z.floor(), norm, Vec3::new(0., 0., -1.));
+        let (_, norm) = min_or(
+            min,
+            self.z.floor() + 1. - self.z,
+            norm,
+            Vec3::new(0., 0., 1.),
+        );
+        return norm;
+    }
+}
+
+fn min_or<T>(a: f64, b: f64, at: T, bt: T) -> (f64, T) {
+    if a < b {
+        return (a, at);
+    }
+    return (b, bt);
 }
 
 #[derive(Debug)]
@@ -103,7 +148,7 @@ impl Cube {
     }
 
     fn max_marchable_distance(&self, p: &Vec3, d: &Vec3) -> f64 {
-        let bpos = self.fpos;
+        let bpos = self.pos.to_vec3();
         let size = self.size as f64;
         let dx = if d.x > 0. {
             bpos.x + size - p.x
@@ -122,7 +167,12 @@ impl Cube {
         };
 
         // dx = V_x * x solve for x: x = dx / Vx
-        (dx / d.x).min(dy / d.y).min(dz / d.z)
+        (dx / d.x).abs().min((dy / d.y).abs()).min((dz / d.z).abs())
+    }
+
+    fn center(&self) -> Vec3 {
+        let s2 = self.size as f64 / 2.;
+        Vec3::new(self.fpos.x + s2, self.fpos.y + s2, self.fpos.z + s2)
     }
 }
 
@@ -149,18 +199,58 @@ impl Point {
     }
 }
 
-struct Octree {
-    data: OctreeData,
+struct Octree<T> {
+    data: OctreeData<T>,
     bounds: Cube,
 }
 
-enum OctreeData {
-    Empty,
-    Voxel,
-    Split(Box<[Octree; 8]>),
+type Color = [u8; 3];
+fn color_to_f(c: &Color) -> Vec3 {
+    Vec3::new(
+        (c[0] as f64) / 255.,
+        (c[1] as f64) / 255.,
+        (c[2] as f64) / 255.,
+    )
 }
 
-impl Octree {
+fn f_to_color(f: &Vec3) -> Color {
+    [(f.x * 255.) as u8, (f.y * 255.) as u8, (f.z * 255.) as u8]
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RoughVoxel {
+    color: Color,
+    roughness: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EmissionVoxel {
+    color: Color,
+    emission: u8,
+}
+
+impl EmissionVoxel {
+    fn new(color: Color, emission: u8) -> Self {
+        Self { color, emission }
+    }
+}
+
+impl RoughVoxel {
+    fn new(color: Color, roughness: u8) -> Self {
+        Self { color, roughness }
+    }
+}
+
+enum OctreeData<T> {
+    Empty,
+    Voxel(T),
+    Split(Box<[Octree<T>; 8]>),
+}
+
+impl<T> Octree<T>
+where
+    T: Clone,
+{
     fn new(bounds: Cube) -> Self {
         Octree {
             data: OctreeData::Empty,
@@ -168,23 +258,27 @@ impl Octree {
         }
     }
 
-    fn insert(&mut self, voxel: Point) {
-        if !self.bounds.contains(&voxel) {
+    fn insert(&mut self, position: Point, voxel: T) {
+        if !self.bounds.contains(&position) {
             return;
         }
         match &mut self.data {
             OctreeData::Split(children) => {
-                children.iter_mut().for_each(|c| c.insert(voxel));
+                children
+                    .iter_mut()
+                    .for_each(|c| c.insert(position, voxel.clone()));
             }
             OctreeData::Empty => {
                 if self.bounds.size == 1 {
-                    self.data = OctreeData::Voxel;
+                    self.data = OctreeData::Voxel(voxel);
                 } else {
                     self.split();
-                    self.insert(voxel);
+                    self.insert(position, voxel);
                 }
             }
-            OctreeData::Voxel => {}
+            OctreeData::Voxel(_) => {
+                self.data = OctreeData::Voxel(voxel);
+            }
         }
     }
 
@@ -222,18 +316,39 @@ impl Octree {
         idx
     }
 
-    fn find_closest(&self, p: &Vec3, dir: &Vec3) -> (Option<Point>, f64) {
+    fn find_closest(&self, p: &Vec3, dir: &Vec3) -> (Option<&T>, f64) {
         match &self.data {
             OctreeData::Split(subtrees) => {
                 let tree = &subtrees[self.index_of(p)];
                 return tree.find_closest(p, dir);
             }
-            OctreeData::Voxel => {
-                return (Some(self.bounds.pos), 0.);
+            OctreeData::Voxel(v) => {
+                return (Some(v), 0.);
             }
             OctreeData::Empty => {
                 return (None, self.bounds.max_marchable_distance(p, dir));
             }
+        }
+    }
+
+    fn query<'a, F>(&'a self, p: &Vec3, rad: f64, mut f: F)
+    where
+        F: FnMut(&T, &Cube) -> (),
+    {
+        self.query_r(p, rad, &mut f)
+    }
+
+    fn query_r<'a, F>(&'a self, p: &Vec3, rad: f64, f: &mut F)
+    where
+        F: FnMut(&T, &Cube) -> (),
+    {
+        if !self.bounds.containsf(p) && self.bounds.distance_to(p) > rad {
+            return;
+        }
+        match &self.data {
+            OctreeData::Empty => {}
+            OctreeData::Voxel(v) => f(v, &self.bounds),
+            OctreeData::Split(tree) => tree.iter().for_each(|t| t.query_r(p, rad, f)),
         }
     }
 }
@@ -243,7 +358,45 @@ const MAX_DISTANCE: f64 = 100.;
 const MIN_DISTANCE: f64 = 0.0001;
 const PUSH_ANALAYZE_DISTANCE: f64 = 0.000000001;
 
-fn render(buf: &mut [u16], w: u32, h: u32, workers: u32, worker: u32, tree: &Octree) {
+fn cast_to_hit<T>(pos: &mut Vec3, dir: &Vec3, tree: &Octree<T>) -> Option<T>
+where
+    T: Clone,
+{
+    let dir_len = dir.len();
+    let mut total_len = 0.;
+    for _ in 0..MAX_SAMPLE_STEPS {
+        if !tree.bounds.containsf(&pos) {
+            return None;
+        }
+        let (v, d) = tree.find_closest(&pos, &dir);
+        if let Some(v) = v {
+            return Some(v.clone());
+        }
+        if d < 0. {
+            panic!("d = {d}");
+        }
+        *pos = pos.add(&dir.mulf(d + PUSH_ANALAYZE_DISTANCE));
+        total_len += dir_len * (d + PUSH_ANALAYZE_DISTANCE);
+        if total_len > MAX_DISTANCE {
+            return None;
+        }
+    }
+    println!("Step limit");
+    return None;
+}
+
+type MatTree = Octree<RoughVoxel>;
+type LightTree = Octree<EmissionVoxel>;
+
+fn render(
+    buf: &mut [Color],
+    w: u32,
+    h: u32,
+    workers: u32,
+    worker: u32,
+    tree: &MatTree,
+    ltree: &LightTree,
+) {
     let unit = w / workers;
     let start = unit * worker;
     let stop = (worker + 1) * unit;
@@ -252,28 +405,37 @@ fn render(buf: &mut [u16], w: u32, h: u32, workers: u32, worker: u32, tree: &Oct
         for j in 0..h {
             let mut pos = Vec3::new(0., 0., 0.);
             let dir = Vec3::new(i as f64, j as f64, 600.).normalized();
-            let mut voxel = None;
-            for _ in 0..MAX_SAMPLE_STEPS {
-                if !tree.bounds.containsf(&pos) {
-                    break;
-                }
-                let (v, d) = tree.find_closest(&pos, &dir);
-                if let Some(v) = v {
-                    voxel = Some(v);
-                    break;
-                }
-                pos = pos.add(&dir.mul(d + PUSH_ANALAYZE_DISTANCE));
-                let len = pos.len();
-                if len > MAX_DISTANCE {
-                    break;
-                }
-                if d < MIN_DISTANCE {
-                    break;
-                }
+            if let Some(v) = cast_to_hit(&mut pos, &dir, tree) {
+                // let level = ((1. / (pos.len() as f64 / 7.)).powi(2) * 65536.) as u16;
+                // buf[px] = v.color;
+                let voxpos = pos.clone();
+                let normal = pos.prob_voxel_norm();
+                let albedo = color_to_f(&v.color);
+                let mut currentc = Vec3::new(0., 0., 0.);
+                let color = &mut currentc;
+                ltree.query(&pos, 100., |e, lightvox| {
+                    let dest = lightvox.center();
+                    let pos = pos.add(&normal.mulf(5. * MIN_DISTANCE));
+                    let dir = dest.sub(&pos).normalized();
+                    let mut posmat = pos.clone();
+                    cast_to_hit(&mut posmat, &dir, tree);
+                    let mut poslight = pos.clone();
+                    if let None = cast_to_hit(&mut poslight, &dir, ltree) {
+                        panic!("\nBlocked: {:?} Light: {:?}\n Voxel: {:?}\n Dest: {:?}\n LPos: {:?}\n BPos: {:?}\n Start: {:?}\n Normal: {:?}\n Dir: {:?}\n", posmat.sub(&pos).len(), poslight.sub(&pos).len(), voxpos, dest, poslight, posmat, pos, normal, dir);
+                    }
+                    if poslight.sub(&pos).len() < posmat.sub(&pos).len() {
+                        *color =
+                             color.add(&color_to_f(&e.color).mul(&albedo.mulf(normal.dot(&dir))));
+                        // *color = Vec3::new(0., 255., 255.);
+                        // println!("Light hit: {:?} from {:?} to {:?}", e, pos, poslight);
+                    } else {
+                        // println!("Blocked: {:?} Light: {:?}\n LPos: {:?}\n BPos: {:?}\n Start: {:?}\n Normal: {:?}", posmat.sub(&pos).len(), poslight.sub(&pos).len(), poslight, posmat, pos, normal);
+                    }
+                });
+                buf[px] = f_to_color(color);
             }
-            if let Some(_) = voxel {
-                let level = ((1. / (pos.len() as f64 / 7.)).powi(2) * 65536.) as u16;
-                buf[px] = level;
+            if let Some(v) = cast_to_hit(&mut pos, &dir, ltree) {
+                buf[px] = v.color;
             }
             px += 1;
         }
@@ -281,35 +443,49 @@ fn render(buf: &mut [u16], w: u32, h: u32, workers: u32, worker: u32, tree: &Oct
 }
 
 fn main() {
+    let mut ltree = Octree::new(Cube::new(-1, -1, -1, 128));
     let mut tree = Octree::new(Cube::new(-1, -1, -1, 128));
 
-    tree.insert(Point::new(5, 5, 10));
-    tree.insert(Point::new(5, 6, 10));
-    tree.insert(Point::new(5, 5, 9));
+    tree.insert(Point::new(5, 5, 10), RoughVoxel::new([200, 200, 200], 255));
+    tree.insert(Point::new(5, 6, 10), RoughVoxel::new([200, 200, 200], 100));
+    ltree.insert(
+        Point::new(5, 5, 9),
+        EmissionVoxel::new([100, 200, 100], 255),
+    );
+
     for x in 0..30 {
         for z in 5..50 {
-            tree.insert(Point::new(x, 7, z));
+            tree.insert(Point::new(x, 7, z), RoughVoxel::new([255, 255, 255], 255));
         }
     }
     let now = Instant::now();
     let mut buffer = ImageBuffer::new(600, 600);
-    let mut data = Box::new([0 as u16; 600 * 600]);
-    let thread_count = 12;
+    let mut data = Box::new([[0, 0, 0] as Color; 600 * 600]);
+    let thread_count = 1;
     let chunks = data.chunks_mut((600 / thread_count) * 600);
     let treeref = &tree;
+    let ltreeref = &ltree;
     thread::scope(|s| {
-        chunks
-            .enumerate()
-            .for_each(|(i, d)| {
-                s.spawn(move || render(d, 600, 600, thread_count as u32, i as u32, treeref));
-            })
+        chunks.enumerate().for_each(|(i, d)| {
+            s.spawn(move || {
+                render(
+                    d,
+                    600,
+                    600,
+                    thread_count as u32,
+                    i as u32,
+                    treeref,
+                    ltreeref,
+                )
+            });
+        })
     });
     println!("Elapsed: {:.2?}", now.elapsed());
-    
+
     for i in 0..600 {
         for j in 0..600 {
-            let gray = data[(600 * i + j) as usize];
-            buffer.put_pixel(i, j, Rgb([gray, gray, gray]));
+            let color = data[(600 * i + j) as usize];
+            buffer.put_pixel(i, j, Rgb(color));
         }
     }
     let elapsed = now.elapsed();
