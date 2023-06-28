@@ -105,7 +105,7 @@ impl Vec3 {
         // Solve for r:
         // r = (voxel wall - self.dim) / dir.dim
         //
-        // The normal is in the dimension wich solves for the smallest r
+        // The normal is in the dimension which solves for the smallest r
 
         let mut dist_x = voxel_position.x;
         if dir.x > 0. {
@@ -230,13 +230,13 @@ impl Cube {
         Vec3::new(self.fpos.x + s2, self.fpos.y + s2, self.fpos.z + s2)
     }
 
-    fn min_border_dist(&self, p: Point) -> i64 {
+    fn max_border_dist(&self, p: Point) -> i64 {
         (p.x - self.pos.x)
-            .min(p.y - self.pos.y)
-            .min(p.z - self.pos.z)
-            .min(self.pos.x + self.size - p.x)
-            .min(self.pos.y + self.size - p.y)
-            .min(self.pos.z + self.size - p.z)
+            .max(p.y - self.pos.y)
+            .max(p.z - self.pos.z)
+            .max(self.pos.x + self.size - p.x)
+            .max(self.pos.y + self.size - p.y)
+            .max(self.pos.z + self.size - p.z)
     }
 }
 
@@ -456,9 +456,12 @@ impl LightingTree {
     fn insert(&mut self, position: Point, emission_strength: u8) {
         let strength = emission_strength_from_u8(emission_strength);
         let border_brightness =
-            strength / (self.bounds.min_border_dist(position) - 1).pow(2) as f64;
+            strength / (self.bounds.max_border_dist(position) - 1).pow(2) as f64;
         if border_brightness > MIN_LIGHTING {
             self.lights.push(position);
+            return;
+        }
+        if self.bounds.size == 1 {
             return;
         }
         let child = self.index_of(&position);
@@ -541,38 +544,46 @@ impl LightingTree {
     }
 }
 
-const MAX_SAMPLE_STEPS: usize = 1000;
-const MAX_DISTANCE: f64 = 100.;
-const MIN_DISTANCE: f64 = 1e-5;
-const MIN_LIGHTING: f64 = 1e-1;
-const PUSH_ANALAYZE_DISTANCE: f64 = 1e-9;
+const MAX_SAMPLE_STEPS: usize = 100;
+const MAX_DISTANCE: f64 = 1000.;
+const CAMERA_SHAKE: f64 = 1e-3;
+const SOLID_POS_PUSH: f64 = 2e-4;
+const MIN_LIGHTING: f64 = 1. / 300.;
+const PUSH_ANALAYZE_DISTANCE: f64 = 1e-4;
 
-fn cast_to_hit<T>(mut pos: Vec3, dir: &Vec3, tree: &Octree<T>) -> (Option<T>, Vec3)
+#[derive(PartialEq)]
+enum CastStatus {
+    InsufficientSteps,
+    OutOfTree,
+    MaxDistance,
+    Hit,
+}
+
+fn cast_to_hit<T>(mut pos: Vec3, dir: &Vec3, tree: &Octree<T>) -> (Option<T>, Vec3, CastStatus)
 where
     T: Clone,
 {
     let mut total_len = 0.;
     for _ in 0..MAX_SAMPLE_STEPS {
         if !tree.bounds.containsf(&pos) {
-            return (None, pos);
+            return (None, pos, CastStatus::OutOfTree);
         }
         let (v, d) = tree.find_closest(&pos, &dir);
         if let Some(v) = v {
-            return (Some(v.clone()), pos);
+            return (Some(v.clone()), pos, CastStatus::Hit);
         }
         let buf = if d < PUSH_ANALAYZE_DISTANCE {
             PUSH_ANALAYZE_DISTANCE
         } else {
-            d
+            d + PUSH_ANALAYZE_DISTANCE
         };
         pos = pos.add(&dir.mulf(buf));
         total_len += buf;
         if total_len > MAX_DISTANCE {
-            return (None, pos);
+            return (None, pos, CastStatus::MaxDistance);
         }
     }
-    println!("Step limit");
-    return (None, pos);
+    return (None, pos, CastStatus::InsufficientSteps);
 }
 
 type MatTree = Octree<RoughVoxel>;
@@ -592,7 +603,7 @@ fn render(
     ltree: &EmissionTree,
     lights: &LightingTree,
 ) {
-    let camera = Vec3::new(0., 0., 0.);
+    let camera = Vec3::new(CAMERA_SHAKE, CAMERA_SHAKE, CAMERA_SHAKE);
     let unit = w / workers;
     let wh = w as f64 / 2.;
     let start = unit * worker;
@@ -601,13 +612,13 @@ fn render(
         for x in (0..h).rev() {
             let px = (w * (y - start) + x) as usize;
             let dir =
-                Vec3::new(x as f64 + MIN_DISTANCE, y as f64 + MIN_DISTANCE, 600.).normalized();
-            let (voxel, solidpos) = cast_to_hit(camera, &dir, tree);
+                Vec3::new(x as f64 + CAMERA_SHAKE, y as f64 + CAMERA_SHAKE, 600.).normalized();
+            let (voxel, solidpos, status) = cast_to_hit(camera, &dir, tree);
             if let Some(v) = voxel {
                 let voxpos = solidpos.clone();
                 let normal = solidpos.prob_voxel_norm(&dir);
                 let albedo = color_to_f(&v.color);
-                let direct_light_pos = solidpos.add(&normal.mulf(5. * MIN_DISTANCE));
+                let direct_light_pos = solidpos.add(&dir.mulf(-SOLID_POS_PUSH));
                 let mut currentc = Vec3::new(0., 0., 0.);
                 let color = &mut currentc;
                 lights.query(&direct_light_pos, |lightvoxel| {
@@ -615,27 +626,32 @@ fn render(
                     let vec_to_dest = dest.sub(&direct_light_pos);
                     let dist_to_dest = vec_to_dest.len();
                     let dir = vec_to_dest.normalized();
-                    let (_, solid_hit_pos) = cast_to_hit(direct_light_pos, &dir, tree);
-                    let (lvoxel, light_hit_pos) = cast_to_hit(direct_light_pos, &dir, ltree);
-                    if let None = lvoxel  {
-                        panic!("\nMissed Light - Blocked: {:?} Light: {:?}\n Voxel: {:?}\n Dest: {:?}\n LPos: {:?}\n BPos: {:?}\n Start: {:?}\n Normal: {:?}\n Dir: {:?}\n", solid_hit_pos.sub(&direct_light_pos).len(), light_hit_pos.sub(&direct_light_pos).len(), voxpos, dest, light_hit_pos, solid_hit_pos, direct_light_pos, normal, dir);
+                    let (_, solid_hit_pos, _) = cast_to_hit(direct_light_pos, &dir, tree);
+                    let (lvoxel, light_hit_pos, status) =
+                        cast_to_hit(direct_light_pos, &dir, ltree);
+                    if let None = lvoxel {
+                        if status != CastStatus::InsufficientSteps {
+                            panic!("\nMissed Light - Blocked: {:?} Light: {:?}\n Voxel: {:?}\n Dest: {:?}\n LPos: {:?}\n BPos: {:?}\n Start: {:?}\n Normal: {:?}\n Dir: {:?}\n", solid_hit_pos.sub(&direct_light_pos).len(), light_hit_pos.sub(&direct_light_pos).len(), voxpos, dest, light_hit_pos, solid_hit_pos, direct_light_pos, normal, dir);
+                        }
+                        return;
                     }
                     let emission_voxel = lvoxel.unwrap();
                     let light_dist = light_hit_pos.sub(&direct_light_pos).len();
                     let solid_dist = solid_hit_pos.sub(&direct_light_pos).len();
                     if light_hit_pos.voxel_equals(&dest) && light_dist < solid_dist {
                         // color += e.emission * e.color * albedo * (normal \cdot dir)
-                        let emission_strength = emission_strength_from_u8(emission_voxel.emission) / ((dist_to_dest - 0.5).powi(2)) * normal.dot(&dir);
+                        let emission_strength = emission_strength_from_u8(emission_voxel.emission)
+                            / ((dist_to_dest - 0.5).powi(2))
+                            * normal.dot(&dir);
                         let mixed_color = albedo.mulf(emission_strength);
-                        *color =
-                             color.add(&color_to_f(&emission_voxel.color).mul(&mixed_color));
+                        *color = color.add(&color_to_f(&emission_voxel.color).mul(&mixed_color));
                     }
                 });
                 buf[px] = f_to_color(color);
             }
             let solid_dist = camera.sub(&solidpos).len();
             let lpos = camera.clone();
-            if let (Some(v), lpos) = cast_to_hit(lpos, &dir, ltree) {
+            if let (Some(v), lpos, _) = cast_to_hit(lpos, &dir, ltree) {
                 if camera.sub(&lpos).len() < solid_dist {
                     buf[px] = v.color;
                 }
@@ -671,7 +687,14 @@ fn image2(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut Lighti
                 if x % 8 == 0 && y % 8 == 0 && z % 8 == 0 {
                     emissions.insert(
                         Point::new(x, y, z),
-                        EmissionVoxel::new([(x % 256).min(100) as u8, (y % 256).min(100) as u8, (z % 256).min(100) as u8], 50),
+                        EmissionVoxel::new(
+                            [
+                                (x % 256).min(100) as u8,
+                                (y % 256).min(100) as u8,
+                                (z % 256).min(100) as u8,
+                            ],
+                            50,
+                        ),
                     );
                     light.insert(Point::new(x, y, z), 50);
                 } else {
