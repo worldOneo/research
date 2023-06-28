@@ -193,21 +193,21 @@ impl Cube {
         let pos = self.fpos;
         let size = self.size as f64;
 
-        !(pos.x >= p.x
-            || pos.x + size < p.x
-            || pos.y >= p.y
-            || pos.y + size < p.y
-            || pos.z >= p.z
-            || pos.z + size < p.z)
+        !(pos.x > p.x
+            || pos.x + size <= p.x
+            || pos.y > p.y
+            || pos.y + size <= p.y
+            || pos.z > p.z
+            || pos.z + size <= p.z)
     }
 
     fn contains(&self, p: &Point) -> bool {
-        !(self.pos.x >= p.x
-            || self.pos.x + self.size < p.x
-            || self.pos.y >= p.y
-            || self.pos.y + self.size < p.y
-            || self.pos.z >= p.z
-            || self.pos.z + self.size < p.z)
+        !(self.pos.x > p.x
+            || self.pos.x + self.size <= p.x
+            || self.pos.y > p.y
+            || self.pos.y + self.size <= p.y
+            || self.pos.z > p.z
+            || self.pos.z + self.size <= p.z)
     }
 
     fn max_marchable_distance(&self, p: &Vec3, d: &Vec3) -> f64 {
@@ -228,6 +228,15 @@ impl Cube {
     fn center(&self) -> Vec3 {
         let s2 = self.size as f64 / 2.;
         Vec3::new(self.fpos.x + s2, self.fpos.y + s2, self.fpos.z + s2)
+    }
+
+    fn min_border_dist(&self, p: Point) -> i64 {
+        (p.x - self.pos.x)
+            .min(p.y - self.pos.y)
+            .min(p.z - self.pos.z)
+            .min(self.pos.x + self.size - p.x)
+            .min(self.pos.y + self.size - p.y)
+            .min(self.pos.z + self.size - p.z)
     }
 }
 
@@ -252,6 +261,14 @@ impl Point {
 
         return (dx * dx + dy * dy + dz * dz).sqrt();
     }
+
+    fn voxel_center(&self) -> Vec3 {
+        Vec3::new(
+            self.x as f64 + 0.5,
+            self.y as f64 + 0.5,
+            self.z as f64 + 0.5,
+        )
+    }
 }
 
 struct Octree<T> {
@@ -268,8 +285,21 @@ fn color_to_f(c: &Color) -> Vec3 {
     )
 }
 
+fn aces(x: f64) -> f64 {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return (x * (a * x + b)) / (x * (c * x + d) + e).clamp(0.0, 1.0);
+}
+
 fn f_to_color(f: &Vec3) -> Color {
-    [(f.x * 255.) as u8, (f.y * 255.) as u8, (f.z * 255.) as u8]
+    [
+        ((f.x) * 255.) as u8,
+        ((f.y) * 255.) as u8,
+        ((f.z) * 255.) as u8,
+    ]
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -408,9 +438,113 @@ where
     }
 }
 
+struct LightingTree {
+    split: Option<Box<[LightingTree; 8]>>,
+    bounds: Cube,
+    lights: Vec<Point>,
+}
+
+impl LightingTree {
+    fn new(bounds: Cube) -> Self {
+        LightingTree {
+            split: None,
+            lights: vec![],
+            bounds,
+        }
+    }
+
+    fn insert(&mut self, position: Point, emission_strength: u8) {
+        let strength = emission_strength_from_u8(emission_strength);
+        let border_brightness =
+            strength / (self.bounds.min_border_dist(position) - 1).pow(2) as f64;
+        if border_brightness > MIN_LIGHTING {
+            self.lights.push(position);
+            return;
+        }
+        let child = self.index_of(&position);
+        self.split();
+        if let Some(c) = &mut self.split {
+            c[child].insert(position, emission_strength);
+        }
+    }
+
+    fn split(&mut self) {
+        if let Some(_) = self.split {
+            return;
+        }
+        let Cube {
+            pos: Point { x, y, z },
+            fpos: _,
+            size,
+        } = self.bounds;
+        let n = size / 2;
+        self.split = Some(Box::new([
+            Self::new(Cube::new(x + 0, y + 0, z + 0, n)),
+            Self::new(Cube::new(x + 0, y + 0, z + n, n)),
+            Self::new(Cube::new(x + 0, y + n, z + 0, n)),
+            Self::new(Cube::new(x + 0, y + n, z + n, n)),
+            Self::new(Cube::new(x + n, y + 0, z + 0, n)),
+            Self::new(Cube::new(x + n, y + 0, z + n, n)),
+            Self::new(Cube::new(x + n, y + n, z + 0, n)),
+            Self::new(Cube::new(x + n, y + n, z + n, n)),
+        ]));
+    }
+
+    fn index_of(&self, p: &Point) -> usize {
+        let hs = self.bounds.size / 2;
+        let mut idx = 0;
+        if p.x >= self.bounds.pos.x + hs {
+            idx |= 0b100;
+        }
+        if p.y >= self.bounds.pos.y + hs {
+            idx |= 0b010;
+        }
+        if p.z >= self.bounds.pos.z + hs {
+            idx |= 0b001;
+        }
+        idx
+    }
+
+    fn index_of_f(&self, p: &Vec3) -> usize {
+        let hs = (self.bounds.size / 2) as f64;
+        let mut idx = 0;
+        if p.x >= self.bounds.fpos.x + hs {
+            idx |= 0b100;
+        }
+        if p.y >= self.bounds.fpos.y + hs {
+            idx |= 0b010;
+        }
+        if p.z >= self.bounds.fpos.z + hs {
+            idx |= 0b001;
+        }
+        idx
+    }
+
+    fn query<'a, F>(&'a self, p: &Vec3, mut f: F)
+    where
+        F: FnMut(&Point) -> (),
+    {
+        self.query_r(p, &mut f)
+    }
+
+    fn query_r<'a, F>(&'a self, p: &Vec3, f: &mut F)
+    where
+        F: FnMut(&Point) -> (),
+    {
+        for c in &self.lights {
+            f(c);
+        }
+        let index = self.index_of_f(p);
+        if let Some(c) = &self.split {
+            c[index].query_r(p, f);
+        }
+    }
+}
+
 const MAX_SAMPLE_STEPS: usize = 1000;
 const MAX_DISTANCE: f64 = 100.;
-const MIN_DISTANCE: f64 = 1e-7;
+const MIN_DISTANCE: f64 = 1e-5;
+const MIN_LIGHTING: f64 = 1e-1;
 const PUSH_ANALAYZE_DISTANCE: f64 = 1e-9;
 
 fn cast_to_hit<T>(mut pos: Vec3, dir: &Vec3, tree: &Octree<T>) -> (Option<T>, Vec3)
@@ -442,7 +576,11 @@ where
 }
 
 type MatTree = Octree<RoughVoxel>;
-type LightTree = Octree<EmissionVoxel>;
+type EmissionTree = Octree<EmissionVoxel>;
+
+fn emission_strength_from_u8(u: u8) -> f64 {
+    (2_f64).powf(u as f64 / 16.)
+}
 
 fn render(
     buf: &mut [Color],
@@ -451,45 +589,46 @@ fn render(
     workers: u32,
     worker: u32,
     tree: &MatTree,
-    ltree: &LightTree,
+    ltree: &EmissionTree,
+    lights: &LightingTree,
 ) {
     let camera = Vec3::new(0., 0., 0.);
     let unit = w / workers;
     let wh = w as f64 / 2.;
     let start = unit * worker;
     let stop = (worker + 1) * unit;
-    let mut px = 0;
-    for i in (start)..(stop) {
-        for j in 0..h {
+    for y in ((start)..(stop)).rev() {
+        for x in (0..h).rev() {
+            let px = (w * (y - start) + x) as usize;
             let dir =
-                Vec3::new(i as f64 + MIN_DISTANCE, j as f64 + MIN_DISTANCE, 600.).normalized();
+                Vec3::new(x as f64 + MIN_DISTANCE, y as f64 + MIN_DISTANCE, 600.).normalized();
             let (voxel, solidpos) = cast_to_hit(camera, &dir, tree);
             if let Some(v) = voxel {
                 let voxpos = solidpos.clone();
                 let normal = solidpos.prob_voxel_norm(&dir);
                 let albedo = color_to_f(&v.color);
+                let direct_light_pos = solidpos.add(&normal.mulf(5. * MIN_DISTANCE));
                 let mut currentc = Vec3::new(0., 0., 0.);
                 let color = &mut currentc;
-                ltree.query(&solidpos, 100., |e, lightvox| {
-                    let dest = lightvox.center();
-                    let pos = solidpos.add(&normal.mulf(5. * MIN_DISTANCE));
-                    let vec_to_dest = dest.sub(&solidpos);
+                lights.query(&direct_light_pos, |lightvoxel| {
+                    let dest = lightvoxel.voxel_center();
+                    let vec_to_dest = dest.sub(&direct_light_pos);
                     let dist_to_dest = vec_to_dest.len();
                     let dir = vec_to_dest.normalized();
-                    let posmat = pos.clone();
-                    let (_, posmat) = cast_to_hit(posmat, &dir, tree);
-                    let poslight = pos.clone();
-                    let (lvoxel, poslight) = cast_to_hit(poslight, &dir, ltree);
+                    let (_, solid_hit_pos) = cast_to_hit(direct_light_pos, &dir, tree);
+                    let (lvoxel, light_hit_pos) = cast_to_hit(direct_light_pos, &dir, ltree);
                     if let None = lvoxel  {
-                        panic!("\nBlocked: {:?} Light: {:?}\n Voxel: {:?}\n Dest: {:?}\n LPos: {:?}\n BPos: {:?}\n Start: {:?}\n Normal: {:?}\n Dir: {:?}\n", posmat.sub(&pos).len(), poslight.sub(&pos).len(), voxpos, dest, poslight, posmat, pos, normal, dir);
+                        panic!("\nMissed Light - Blocked: {:?} Light: {:?}\n Voxel: {:?}\n Dest: {:?}\n LPos: {:?}\n BPos: {:?}\n Start: {:?}\n Normal: {:?}\n Dir: {:?}\n", solid_hit_pos.sub(&direct_light_pos).len(), light_hit_pos.sub(&direct_light_pos).len(), voxpos, dest, light_hit_pos, solid_hit_pos, direct_light_pos, normal, dir);
                     }
-                    let light_dist = poslight.sub(&pos).len();
-                    if poslight.voxel_equals(&dest) && light_dist < posmat.sub(&solidpos).len() {
+                    let emission_voxel = lvoxel.unwrap();
+                    let light_dist = light_hit_pos.sub(&direct_light_pos).len();
+                    let solid_dist = solid_hit_pos.sub(&direct_light_pos).len();
+                    if light_hit_pos.voxel_equals(&dest) && light_dist < solid_dist {
                         // color += e.emission * e.color * albedo * (normal \cdot dir)
-                        let emission_strength = (2_f64).powf(e.emission as f64 / 16.) / (255. * (dist_to_dest - 0.5).powi(2));
-                        let mixed_color = albedo.mulf(normal.dot(&dir));
+                        let emission_strength = emission_strength_from_u8(emission_voxel.emission) / ((dist_to_dest - 0.5).powi(2)) * normal.dot(&dir);
+                        let mixed_color = albedo.mulf(emission_strength);
                         *color =
-                             color.add(&color_to_f(&e.color).mul(&mixed_color).mulf(emission_strength));
+                             color.add(&color_to_f(&emission_voxel.color).mul(&mixed_color));
                     }
                 });
                 buf[px] = f_to_color(color);
@@ -501,29 +640,55 @@ fn render(
                     buf[px] = v.color;
                 }
             }
-            px += 1;
+        }
+    }
+}
+
+fn image1(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut LightingTree) {
+    solids.insert(Point::new(5, 5, 10), RoughVoxel::new([200, 200, 200], 255));
+    solids.insert(Point::new(5, 6, 10), RoughVoxel::new([200, 200, 200], 100));
+
+    emissions.insert(Point::new(7, 4, 9), EmissionVoxel::new([100, 200, 100], 30));
+    emissions.insert(
+        Point::new(2, 2, 10),
+        EmissionVoxel::new([255, 255, 255], 50),
+    );
+
+    light.insert(Point::new(7, 4, 9), 30);
+    light.insert(Point::new(2, 2, 10), 50);
+
+    for x in 0..30 {
+        for z in 5..50 {
+            solids.insert(Point::new(x, 7, z), RoughVoxel::new([255, 255, 255], 255));
+        }
+    }
+}
+
+fn image2(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut LightingTree) {
+    for x in (4..64).step_by(4) {
+        for z in (4..64).step_by(4) {
+            for y in (4..64).step_by(4) {
+                if x % 8 == 0 && y % 8 == 0 && z % 8 == 0 {
+                    emissions.insert(
+                        Point::new(x, y, z),
+                        EmissionVoxel::new([(x % 256).min(100) as u8, (y % 256).min(100) as u8, (z % 256).min(100) as u8], 50),
+                    );
+                    light.insert(Point::new(x, y, z), 50);
+                } else {
+                    solids.insert(Point::new(x, y, z), RoughVoxel::new([200, 200, 200], 255));
+                }
+            }
         }
     }
 }
 
 fn main() {
-    let mut ltree = Octree::new(Cube::new(-1, -1, -1, 64));
-    let mut tree = Octree::new(Cube::new(-1, -1, -1, 64));
+    let mut ltree = Octree::new(Cube::new(-1, -1, -1, 128));
+    let mut tree = Octree::new(Cube::new(-1, -1, -1, 128));
+    let mut lights = LightingTree::new(Cube::new(-1, -1, -1, 128));
 
-    tree.insert(Point::new(5, 5, 10), RoughVoxel::new([200, 200, 200], 255));
-    tree.insert(Point::new(5, 6, 10), RoughVoxel::new([200, 200, 200], 100));
-    ltree.insert(Point::new(7, 4, 9), EmissionVoxel::new([100, 200, 100], 160));
+    image2(&mut tree, &mut ltree, &mut lights);
 
-    ltree.insert(
-        Point::new(2, 2, 10),
-        EmissionVoxel::new([255, 255, 255], 192),
-    );
-
-    for x in 0..30 {
-        for z in 5..50 {
-            tree.insert(Point::new(x, 7, z), RoughVoxel::new([255, 255, 255], 255));
-        }
-    }
     let now = Instant::now();
     let mut buffer = ImageBuffer::new(600, 600);
     let mut data = Box::new([[0, 0, 0] as Color; 600 * 600]);
@@ -531,6 +696,7 @@ fn main() {
     let chunks = data.chunks_mut((600 / thread_count) * 600);
     let treeref = &tree;
     let ltreeref = &ltree;
+    let lighting = &lights;
     thread::scope(|s| {
         chunks.enumerate().for_each(|(i, d)| {
             s.spawn(move || {
@@ -542,16 +708,17 @@ fn main() {
                     i as u32,
                     treeref,
                     ltreeref,
+                    lighting,
                 )
             });
         })
     });
     println!("Elapsed: {:.2?}", now.elapsed());
 
-    for i in 0..600 {
-        for j in 0..600 {
-            let color = data[(600 * i + j) as usize];
-            buffer.put_pixel(i, j, Rgb(color));
+    for y in 0..600 {
+        for x in 0..600 {
+            let color = data[(600 * y + x) as usize];
+            buffer.put_pixel(x, y, Rgb(color));
         }
     }
     let elapsed = now.elapsed();
