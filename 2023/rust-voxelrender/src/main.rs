@@ -27,6 +27,15 @@ impl Vec3 {
         Vec3 { x, y, z }
     }
 
+    fn mixf(&self, other: &Vec3, a: f64) -> Vec3 {
+        let b = (1. - a);
+        Vec3::new(
+            self.x * b + other.x * a,
+            self.y * b + other.y * a,
+            self.z * b + other.z * a,
+        )
+    }
+
     fn add(&self, v: &Vec3) -> Vec3 {
         Vec3 {
             x: self.x + v.x,
@@ -613,34 +622,39 @@ fn emission_strength_from_u8(u: u8) -> f64 {
     (2_f64).powf(u as f64 / 16.)
 }
 
-fn render(
-    buf: &mut [Color],
-    w: u32,
-    h: u32,
-    workers: u32,
-    worker: u32,
+fn direct_color(
+    origin: &Vec3,
+    dir: &Vec3,
     tree: &MatTree,
     ltree: &EmissionTree,
     lights: &LightingTree,
-) {
-    let camera = Vec3::new(CAMERA_SHAKE, CAMERA_SHAKE, CAMERA_SHAKE);
-    let unit = w / workers;
-    let start = unit * worker;
-    let stop = (worker + 1) * unit;
-    for y in ((start)..(stop)).rev() {
-        for x in (0..h).rev() {
-            let px = (w * (y - start) + x) as usize;
-            let dir =
-                Vec3::new(x as f64 + CAMERA_SHAKE, y as f64 + CAMERA_SHAKE, 600.).normalized();
-            let (voxel, solidpos, _) = cast_to_hit(camera, &dir, tree);
-            if let Some(v) = voxel {
-                let voxpos = solidpos.clone();
-                let normal = solidpos.prob_voxel_norm(&dir);
-                let albedo = color_to_f(&v.color);
-                let direct_light_pos = solidpos.add(&dir.mulf(-SOLID_POS_PUSH));
-                let mut currentc = Vec3::new(0., 0., 0.);
-                let color = &mut currentc;
-                lights.query(&direct_light_pos, |lightvoxel| {
+    bounces: usize,
+) -> Vec3 {
+    let px_color = Vec3::new(0., 0., 0.);
+    if bounces == 0 {
+        return px_color;
+    }
+    let (voxel, solidpos, _) = cast_to_hit(*origin, &dir, tree);
+
+    // Render light first because it is faster
+    let solid_dist = origin.sub(&solidpos).len();
+    let lpos = origin.clone();
+    if let (Some(v), lpos, _) = cast_to_hit(lpos, &dir, ltree) {
+        if origin.sub(&lpos).len() < solid_dist {
+            let light_strength = emission_strength_from_u8(v.emission);
+            let adjusted_color = color_to_f(&v.color).mulf(light_strength);
+            return adjusted_color;
+        }
+    }
+
+    if let Some(v) = voxel {
+        let voxpos = solidpos.clone();
+        let normal = solidpos.prob_voxel_norm(&dir);
+        let albedo = color_to_f(&v.color);
+        let direct_light_pos = solidpos.add(&dir.mulf(-SOLID_POS_PUSH));
+        let mut currentc = Vec3::new(0., 0., 0.);
+        let color = &mut currentc;
+        lights.query(&direct_light_pos, |lightvoxel| {
                     let dest = lightvoxel.voxel_center();
                     let vec_to_dest = dest.sub(&direct_light_pos);
                     let dist_to_dest = vec_to_dest.len();
@@ -666,35 +680,77 @@ fn render(
                         *color = color.add(&color_to_f(&emission_voxel.color).mul(&mixed_color));
                     }
                 });
-                buf[px] = f_to_color(color);
-            }
-            let solid_dist = camera.sub(&solidpos).len();
-            let lpos = camera.clone();
-            if let (Some(v), lpos, _) = cast_to_hit(lpos, &dir, ltree) {
-                if camera.sub(&lpos).len() < solid_dist {
-                    buf[px] = f_to_color(&color_to_f(&v.color).mulf(emission_strength_from_u8(v.emission)));
-                }
-            }
+        if v.roughness < 255 {
+            // r = d - 2(d \dot n)n
+            let reflection = dir.sub(&normal.mulf(&dir.dot(&normal) * 2.));
+            let additional_color = direct_color(
+                &direct_light_pos,
+                &reflection,
+                tree,
+                ltree,
+                lights,
+                bounces - 1,
+            );
+            let reflected_back = 1. - (1. / (2_f64).powf(2. - v.roughness as f64 / 128.));
+            return color.mixf(&additional_color, reflected_back);
+        }
+        return *color;
+    }
+    px_color
+}
+
+fn render(
+    buf: &mut [Color],
+    w: u32,
+    h: u32,
+    workers: u32,
+    worker: u32,
+    tree: &MatTree,
+    ltree: &EmissionTree,
+    lights: &LightingTree,
+) {
+    let camera = Vec3::new(CAMERA_SHAKE, CAMERA_SHAKE, CAMERA_SHAKE);
+    let unit = w / workers;
+    let start = unit * worker;
+    let stop = (worker + 1) * unit;
+    for y in ((start)..(stop)).rev() {
+        for x in (0..h).rev() {
+            let px = (w * (y - start) + x) as usize;
+            let dir =
+                Vec3::new(x as f64 + CAMERA_SHAKE, y as f64 + CAMERA_SHAKE, 600.).normalized();
+            let direct_color = direct_color(&camera, &dir, tree, ltree, lights, 6);
+            buf[px] = f_to_color(&direct_color);
         }
     }
 }
 
 fn image1(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut LightingTree) {
-    solids.insert(Point::new(5, 5, 10), RoughVoxel::new([200, 200, 200], 255));
-    solids.insert(Point::new(5, 6, 10), RoughVoxel::new([200, 200, 200], 100));
+    for x in 3..=6 {
+        for y in 3..=6 {
+            solids.insert(Point::new(x, y, 13), RoughVoxel::new([200, 200, 200], 50));
+        }
+    }
+    emissions.insert(
+        Point::new(8, 6, 13),
+        EmissionVoxel::new([100, 200, 255], 30),
+    );
+    light.insert(Point::new(8, 6, 13), 30);
+
+    solids.insert(Point::new(5, 5, 10), RoughVoxel::new([240, 130, 130], 255));
+    solids.insert(Point::new(5, 6, 10), RoughVoxel::new([240, 130, 130], 255));
 
     emissions.insert(Point::new(7, 6, 9), EmissionVoxel::new([100, 200, 100], 30));
     emissions.insert(
-        Point::new(2, 2, 10),
+        Point::new(2, 2, 12),
         EmissionVoxel::new([255, 255, 255], 50),
     );
 
     light.insert(Point::new(7, 6, 9), 30);
-    light.insert(Point::new(2, 2, 10), 50);
+    light.insert(Point::new(2, 2, 12), 50);
 
     for x in 0..30 {
         for z in 5..50 {
-            solids.insert(Point::new(x, 7, z), RoughVoxel::new([255, 255, 255], 255));
+            solids.insert(Point::new(x, 7, z), RoughVoxel::new([255, 255, 255], 230));
         }
     }
 }
