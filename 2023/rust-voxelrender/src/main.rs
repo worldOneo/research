@@ -672,7 +672,7 @@ fn render(
             let lpos = camera.clone();
             if let (Some(v), lpos, _) = cast_to_hit(lpos, &dir, ltree) {
                 if camera.sub(&lpos).len() < solid_dist {
-                    buf[px] = v.color;
+                    buf[px] = f_to_color(&color_to_f(&v.color).mulf(emission_strength_from_u8(v.emission)));
                 }
             }
         }
