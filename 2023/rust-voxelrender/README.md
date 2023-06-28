@@ -8,7 +8,7 @@ How a camera works has been guesstemated the focus is more on raycasting in an O
 We can raytrace throug the voxel tree to the light to generate nice images:  
 ![](out10.png)  
 ![](out11.png)  
-The first scene is about 200ms to render multithreaded and the second scene is 22s (i7 8750H).
+The first scene is about 170ms to render multithreaded and the second scene is 12s (i7 8750H).
 
 ## old
 
