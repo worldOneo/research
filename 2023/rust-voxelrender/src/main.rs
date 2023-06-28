@@ -55,6 +55,10 @@ impl Vec3 {
         self.x * v.x + self.y * v.y + self.z * v.z
     }
 
+    fn powf(&self, f: f64) -> Vec3 {
+        Vec3::new(self.x.powf(f), self.y.powf(f), self.z.powf(f))
+    }
+
     fn mulf(&self, s: f64) -> Vec3 {
         Vec3 {
             x: self.x * s,
@@ -294,11 +298,27 @@ fn aces(x: f64) -> f64 {
     return (x * (a * x + b)) / (x * (c * x + d) + e).clamp(0.0, 1.0);
 }
 
+fn filmic_tone_mapping(color: f64) -> f64 {
+    let color = (0_f64).max(color - 0.004);
+    let color = (color * (6.2 * color + 0.5)) / (color * (6.2 * color + 1.7) + 0.06);
+    return color;
+}
+
+fn white_preserving_luma_based_reinhard_tone_mapping(color: &Vec3) -> Vec3 {
+    let white = 2.;
+    let luma = color.dot(&Vec3::new(0.2126, 0.7152, 0.0722));
+    let tone_mapped_luma = luma * (1. + luma / (white * white)) / (1. + luma);
+    let color = color.mulf(tone_mapped_luma / luma);
+    let inv_gamma = 1. / 2.2;
+    let color = color.powf(inv_gamma);
+    return color;
+}
+
 fn f_to_color(f: &Vec3) -> Color {
     [
-        ((f.x) * 255.) as u8,
-        ((f.y) * 255.) as u8,
-        ((f.z) * 255.) as u8,
+        (filmic_tone_mapping(f.x) * 255.) as u8,
+        (filmic_tone_mapping(f.y) * 255.) as u8,
+        (filmic_tone_mapping(f.z) * 255.) as u8,
     ]
 }
 
@@ -605,7 +625,6 @@ fn render(
 ) {
     let camera = Vec3::new(CAMERA_SHAKE, CAMERA_SHAKE, CAMERA_SHAKE);
     let unit = w / workers;
-    let wh = w as f64 / 2.;
     let start = unit * worker;
     let stop = (worker + 1) * unit;
     for y in ((start)..(stop)).rev() {
@@ -613,7 +632,7 @@ fn render(
             let px = (w * (y - start) + x) as usize;
             let dir =
                 Vec3::new(x as f64 + CAMERA_SHAKE, y as f64 + CAMERA_SHAKE, 600.).normalized();
-            let (voxel, solidpos, status) = cast_to_hit(camera, &dir, tree);
+            let (voxel, solidpos, _) = cast_to_hit(camera, &dir, tree);
             if let Some(v) = voxel {
                 let voxpos = solidpos.clone();
                 let normal = solidpos.prob_voxel_norm(&dir);
@@ -664,13 +683,13 @@ fn image1(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut Lighti
     solids.insert(Point::new(5, 5, 10), RoughVoxel::new([200, 200, 200], 255));
     solids.insert(Point::new(5, 6, 10), RoughVoxel::new([200, 200, 200], 100));
 
-    emissions.insert(Point::new(7, 4, 9), EmissionVoxel::new([100, 200, 100], 30));
+    emissions.insert(Point::new(7, 6, 9), EmissionVoxel::new([100, 200, 100], 30));
     emissions.insert(
         Point::new(2, 2, 10),
         EmissionVoxel::new([255, 255, 255], 50),
     );
 
-    light.insert(Point::new(7, 4, 9), 30);
+    light.insert(Point::new(7, 6, 9), 30);
     light.insert(Point::new(2, 2, 10), 50);
 
     for x in 0..30 {
