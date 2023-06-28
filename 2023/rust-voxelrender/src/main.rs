@@ -1,4 +1,4 @@
-use std::{path::Path, thread, time::Instant};
+use std::{ops::Mul, path::Path, thread, time::Instant};
 
 use image::{ImageBuffer, Rgb};
 
@@ -473,7 +473,9 @@ fn render(
                 ltree.query(&solidpos, 100., |e, lightvox| {
                     let dest = lightvox.center();
                     let pos = solidpos.add(&normal.mulf(5. * MIN_DISTANCE));
-                    let dir = dest.sub(&solidpos).normalized();
+                    let vec_to_dest = dest.sub(&solidpos);
+                    let dist_to_dest = vec_to_dest.len();
+                    let dir = vec_to_dest.normalized();
                     let posmat = pos.clone();
                     let (_, posmat) = cast_to_hit(posmat, &dir, tree);
                     let poslight = pos.clone();
@@ -481,10 +483,13 @@ fn render(
                     if let None = lvoxel  {
                         panic!("\nBlocked: {:?} Light: {:?}\n Voxel: {:?}\n Dest: {:?}\n LPos: {:?}\n BPos: {:?}\n Start: {:?}\n Normal: {:?}\n Dir: {:?}\n", posmat.sub(&pos).len(), poslight.sub(&pos).len(), voxpos, dest, poslight, posmat, pos, normal, dir);
                     }
-                    if poslight.voxel_equals(&dest) && poslight.sub(&pos).len() < posmat.sub(&solidpos).len() {
+                    let light_dist = poslight.sub(&pos).len();
+                    if poslight.voxel_equals(&dest) && light_dist < posmat.sub(&solidpos).len() {
                         // color += e.emission * e.color * albedo * (normal \cdot dir)
+                        let emission_strength = (2_f64).powf(e.emission as f64 / 16.) / (255. * (dist_to_dest - 0.5).powi(2));
+                        let mixed_color = albedo.mulf(normal.dot(&dir));
                         *color =
-                             color.add(&color_to_f(&e.color).mul(&albedo.mulf(normal.dot(&dir))).mulf(e.emission as f64 / 255.));
+                             color.add(&color_to_f(&e.color).mul(&mixed_color).mulf(emission_strength));
                     }
                 });
                 buf[px] = f_to_color(color);
@@ -507,14 +512,11 @@ fn main() {
 
     tree.insert(Point::new(5, 5, 10), RoughVoxel::new([200, 200, 200], 255));
     tree.insert(Point::new(5, 6, 10), RoughVoxel::new([200, 200, 200], 100));
-    ltree.insert(
-        Point::new(7, 5, 9),
-        EmissionVoxel::new([100, 200, 100], 255),
-    );
+    ltree.insert(Point::new(7, 4, 9), EmissionVoxel::new([100, 200, 100], 160));
 
     ltree.insert(
-        Point::new(2, 6, 10),
-        EmissionVoxel::new([255, 255, 255], 100),
+        Point::new(2, 2, 10),
+        EmissionVoxel::new([255, 255, 255], 192),
     );
 
     for x in 0..30 {
