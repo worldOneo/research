@@ -1,4 +1,4 @@
-use std::{path::Path, thread, time::Instant};
+use std::{f64::consts::PI, path::Path, thread, time::Instant};
 
 use image::{ImageBuffer, Rgb};
 
@@ -165,6 +165,45 @@ impl Vec3 {
             },
         );
         norm
+    }
+
+    fn rotate_z(&self, angle: f64) -> Vec3 {
+        Vec3::new(
+            self.x * angle.cos() - self.y * angle.sin(),
+            self.x * angle.sin() + self.y * angle.cos(),
+            self.z,
+        )
+    }
+
+    fn rotate_y(&self, angle: f64) -> Vec3 {
+        Vec3::new(
+            self.x * angle.cos() - self.z * angle.sin(),
+            self.y,
+            -self.x * angle.sin() + self.z * angle.cos(),
+        )
+    }
+
+    fn rotate_x(&self, angle: f64) -> Vec3 {
+        Vec3::new(
+            self.x,
+            self.y * angle.cos() - self.z * angle.sin(),
+            self.y * angle.sin() + self.z * angle.cos(),
+        )
+    }
+
+    fn cross(&self, other: &Vec3) -> Vec3 {
+        Vec3::new(
+            self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z,
+            self.x * other.y - self.y * other.x,
+        )
+    }
+
+    fn rotate_rel(&self, angle: f64, axis: &Vec3) -> Vec3 {
+        let (sin, cos) = angle.sin_cos();
+        self.mulf(cos)
+            .add(&axis.cross(self).mulf(sin))
+            .add(&axis.mulf(axis.dot(self)).mulf(1. - cos))
     }
 }
 
@@ -505,7 +544,7 @@ impl LightingTree {
 
         let is_single_voxel_size = self.bounds.size == 1;
 
-        if  is_single_voxel_size || !is_max_usefull {
+        if is_single_voxel_size || !is_max_usefull {
             return;
         }
 
@@ -593,7 +632,7 @@ const MAX_SAMPLE_STEPS: usize = 100;
 const MAX_DISTANCE: f64 = 1000.;
 const CAMERA_SHAKE: f64 = 1e-3;
 const SOLID_POS_PUSH: f64 = 2e-4;
-const MIN_LIGHTING: f64 = 1. / 150.;
+const MIN_LIGHTING: f64 = 1. / 50.;
 const PUSH_ANALAYZE_DISTANCE: f64 = 1e-4;
 
 #[derive(PartialEq)]
@@ -725,15 +764,25 @@ fn render(
     ltree: &EmissionTree,
     lights: &LightingTree,
 ) {
-    let camera = Vec3::new(CAMERA_SHAKE, CAMERA_SHAKE, CAMERA_SHAKE);
-    let unit = w / workers;
+    let camera = Vec3::new(-3. + CAMERA_SHAKE, -4. + CAMERA_SHAKE, -4. + CAMERA_SHAKE);
+    let unit = h / workers;
     let start = unit * worker;
     let stop = (worker + 1) * unit;
+    let scale = 2304.;
+    let w2 = w as f64 / 2. + CAMERA_SHAKE;
+    let h2 = h as f64 / 2. + CAMERA_SHAKE;
+
     for y in ((start)..(stop)).rev() {
-        for x in (0..h).rev() {
+        for x in (0..w).rev() {
             let px = (w * (y - start) + x) as usize;
-            let dir =
-                Vec3::new(x as f64 + CAMERA_SHAKE, y as f64 + CAMERA_SHAKE, 600.).normalized();
+
+            let camera_norm = Vec3::new(1., 0., 0.);
+            let dir = Vec3::new(1., (x as f64 - w2) / scale, (y as f64 - h2) / scale).normalized();
+            let dir = dir
+                .rotate_rel(PI / 7., &camera_norm.cross(&Vec3::new(0., 0., 1.)).normalized())
+                .rotate_z(PI / 4.)
+                .normalized();
+
             let direct_color = direct_color(&camera, &dir, tree, ltree, lights, 6);
             buf[px] = f_to_color(&direct_color);
         }
@@ -772,17 +821,17 @@ fn image1(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut Lighti
 }
 
 fn image2(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut LightingTree) {
-    for x in (4..64).step_by(4) {
-        for z in (4..64).step_by(4) {
-            for y in (4..64).step_by(4) {
-                if x % 8 == 0 && y % 8 == 0 && z % 8 == 0 {
+    for x in (0..64).step_by(4) {
+        for z in (0..64).step_by(4) {
+            for y in (0..64).step_by(4) {
+                if x % 8 == 4 && y % 8 == 4 && z % 8 == 4 {
                     emissions.insert(
                         Point::new(x, y, z),
                         EmissionVoxel::new(
                             [
-                                (x % 256).min(100) as u8,
-                                (y % 256).min(100) as u8,
-                                (z % 256).min(100) as u8,
+                                y.min(100) as u8,
+                                z.min(100) as u8,
+                                x.min(100) as u8,
                             ],
                             50,
                         ),
@@ -796,20 +845,23 @@ fn image2(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut Lighti
     }
 }
 
+const IMG_W: u32 = 4096;
+const IMG_H: u32 = 2304;
+
 fn main() {
-    let mut ltree = Octree::new(Cube::new(-1, -1, -1, 128));
-    let mut tree = Octree::new(Cube::new(-1, -1, -1, 128));
-    let mut lights = LightingTree::new(Cube::new(-1, -1, -1, 128));
+    let mut ltree = Octree::new(Cube::new(-64, -64, -64, 128));
+    let mut tree = Octree::new(Cube::new(-64, -64, -64, 128));
+    let mut lights = LightingTree::new(Cube::new(-64, -64, -64, 128));
 
     let now = Instant::now();
-    image1(&mut tree, &mut ltree, &mut lights);
+    image2(&mut tree, &mut ltree, &mut lights);
     let scene_build = now.elapsed();
     println!("Scene build: {scene_build:?}");
 
-    let mut buffer = ImageBuffer::new(600, 600);
-    let mut data = Box::new([[0, 0, 0] as Color; 600 * 600]);
+    let mut buffer = ImageBuffer::new(IMG_W, IMG_H);
+    let mut data = Box::new([[0, 0, 0] as Color; (IMG_W * IMG_H) as usize]);
     let thread_count = 12;
-    let chunks = data.chunks_mut((600 / thread_count) * 600);
+    let chunks = data.chunks_mut((IMG_H as usize / thread_count) * IMG_W as usize);
     let treeref = &tree;
     let ltreeref = &ltree;
     let lighting = &lights;
@@ -818,8 +870,8 @@ fn main() {
             s.spawn(move || {
                 render(
                     d,
-                    600,
-                    600,
+                    IMG_W,
+                    IMG_H,
                     thread_count as u32,
                     i as u32,
                     treeref,
@@ -831,9 +883,9 @@ fn main() {
     });
     println!("Render: {:.2?}", now.elapsed());
 
-    for y in 0..600 {
-        for x in 0..600 {
-            let color = data[(600 * y + x) as usize];
+    for y in 0..IMG_H {
+        for x in 0..IMG_W {
+            let color = data[(IMG_W * y + x) as usize];
             buffer.put_pixel(x, y, Rgb(color));
         }
     }
