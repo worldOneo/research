@@ -513,6 +513,9 @@ struct LightingTree {
     lights: Vec<Point>,
 }
 
+const USEFULL_LIGHT_LIMIT: f64 = 1. / 100.;
+const NOT_USEFULL_LIGHT_LIMIT: f64 = 1. / 20.;
+
 impl LightingTree {
     fn new(bounds: Cube) -> Self {
         LightingTree {
@@ -530,7 +533,7 @@ impl LightingTree {
 
         let max_distance = self.bounds.max_border_dist(&position.voxel_center());
         let min_brightness = strength / max_distance.powi(2);
-        let is_min_usefull = min_brightness > MIN_LIGHTING;
+        let is_min_usefull = min_brightness > USEFULL_LIGHT_LIMIT;
         if is_min_usefull {
             self.lights.push(position);
             return;
@@ -539,7 +542,8 @@ impl LightingTree {
         let is_max_usefull = if self.bounds.contains(&position) {
             true
         } else {
-            (strength / self.bounds.distance_to(&position.to_vec3()).powi(2)) > MIN_LIGHTING
+            (strength / self.bounds.distance_to(&position.to_vec3()).powi(2))
+                > NOT_USEFULL_LIGHT_LIMIT
         };
 
         let is_single_voxel_size = self.bounds.size == 1;
@@ -632,7 +636,6 @@ const MAX_SAMPLE_STEPS: usize = 100;
 const MAX_DISTANCE: f64 = 1000.;
 const CAMERA_SHAKE: f64 = 1e-3;
 const SOLID_POS_PUSH: f64 = 2e-4;
-const MIN_LIGHTING: f64 = 1. / 150.;
 const PUSH_ANALAYZE_DISTANCE: f64 = 1e-4;
 
 #[derive(PartialEq)]
@@ -768,7 +771,7 @@ fn render(
     let unit = h / workers;
     let start = unit * worker;
     let stop = (worker + 1) * unit;
-    let scale = 2304.;
+    let scale = 1080.;
     let w2 = w as f64 / 2. + CAMERA_SHAKE;
     let h2 = h as f64 / 2. + CAMERA_SHAKE;
 
@@ -842,8 +845,8 @@ fn image2(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut Lighti
     }
 }
 
-const IMG_W: u32 = 4096;
-const IMG_H: u32 = 2304;
+const IMG_W: u32 = 1920;
+const IMG_H: u32 = 1080;
 
 fn main() {
     let mut ltree = Octree::new(Cube::new(-64, -64, -64, 128));
@@ -851,7 +854,7 @@ fn main() {
     let mut lights = LightingTree::new(Cube::new(-64, -64, -64, 128));
 
     let now = Instant::now();
-    image1(&mut tree, &mut ltree, &mut lights);
+    image2(&mut tree, &mut ltree, &mut lights);
     let scene_build = now.elapsed();
     println!("Scene build: {scene_build:?}");
 
