@@ -632,7 +632,7 @@ const MAX_SAMPLE_STEPS: usize = 100;
 const MAX_DISTANCE: f64 = 1000.;
 const CAMERA_SHAKE: f64 = 1e-3;
 const SOLID_POS_PUSH: f64 = 2e-4;
-const MIN_LIGHTING: f64 = 1. / 50.;
+const MIN_LIGHTING: f64 = 1. / 150.;
 const PUSH_ANALAYZE_DISTANCE: f64 = 1e-4;
 
 #[derive(PartialEq)]
@@ -746,7 +746,7 @@ fn direct_color(
                 lights,
                 bounces - 1,
             );
-            let reflected_back = 1. - (1. / (2_f64).powf(2. - v.roughness as f64 / 128.));
+            let reflected_back = 1. - (1. / (2_f64).powf(4. - v.roughness as f64 / 64.));
             return color.mixf(&additional_color, reflected_back);
         }
         return *color;
@@ -764,7 +764,7 @@ fn render(
     ltree: &EmissionTree,
     lights: &LightingTree,
 ) {
-    let camera = Vec3::new(-3. + CAMERA_SHAKE, -4. + CAMERA_SHAKE, -4. + CAMERA_SHAKE);
+    let camera = Vec3::new(-4. + CAMERA_SHAKE, -4. + CAMERA_SHAKE, -4. + CAMERA_SHAKE);
     let unit = h / workers;
     let start = unit * worker;
     let stop = (worker + 1) * unit;
@@ -779,7 +779,10 @@ fn render(
             let camera_norm = Vec3::new(1., 0., 0.);
             let dir = Vec3::new(1., (x as f64 - w2) / scale, (y as f64 - h2) / scale).normalized();
             let dir = dir
-                .rotate_rel(PI / 7., &camera_norm.cross(&Vec3::new(0., 0., 1.)).normalized())
+                .rotate_rel(
+                    PI / 7.,
+                    &camera_norm.cross(&Vec3::new(0., 0., 1.)).normalized(),
+                )
                 .rotate_z(PI / 4.)
                 .normalized();
 
@@ -790,32 +793,30 @@ fn render(
 }
 
 fn image1(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut LightingTree) {
-    for x in 3..=6 {
-        for y in 3..=6 {
-            solids.insert(Point::new(x, y, 13), RoughVoxel::new([200, 200, 200], 50));
+    for y in -2..=1 {
+        for z in -3..0 {
+            solids.insert(Point::new(5, y, z), RoughVoxel::new([200, 200, 200], 150));
         }
     }
-    emissions.insert(
-        Point::new(8, 6, 13),
-        EmissionVoxel::new([100, 200, 255], 30),
-    );
-    light.insert(Point::new(8, 6, 13), 30);
 
-    solids.insert(Point::new(5, 5, 10), RoughVoxel::new([240, 130, 130], 255));
-    solids.insert(Point::new(5, 6, 10), RoughVoxel::new([240, 130, 130], 255));
+    let blue_point = Point::new(5, 3, -1);
+    emissions.insert(blue_point, EmissionVoxel::new([100, 200, 255], 30));
+    light.insert(blue_point, 30);
 
-    emissions.insert(Point::new(7, 6, 9), EmissionVoxel::new([100, 200, 100], 30));
-    emissions.insert(
-        Point::new(2, 2, 12),
-        EmissionVoxel::new([255, 255, 255], 50),
-    );
+    solids.insert(Point::new(1, -1, -1), RoughVoxel::new([240, 130, 130], 254));
+    solids.insert(Point::new(1, -1, -2), RoughVoxel::new([240, 130, 130], 254));
 
-    light.insert(Point::new(7, 6, 9), 30);
-    light.insert(Point::new(2, 2, 12), 50);
+    let green_light = Point::new(0, 1, -1);
+    emissions.insert(green_light, EmissionVoxel::new([100, 200, 100], 30));
+    light.insert(green_light, 30);
 
-    for x in 0..30 {
-        for z in 5..50 {
-            solids.insert(Point::new(x, 7, z), RoughVoxel::new([255, 255, 255], 230));
+    let white_light = Point::new(4, -3, -4);
+    emissions.insert(white_light, EmissionVoxel::new([255, 255, 255], 50));
+    light.insert(white_light, 50);
+
+    for x in -20..40 {
+        for y in -20..40 {
+            solids.insert(Point::new(x, y, 0), RoughVoxel::new([255, 255, 255], 250));
         }
     }
 }
@@ -828,11 +829,7 @@ fn image2(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut Lighti
                     emissions.insert(
                         Point::new(x, y, z),
                         EmissionVoxel::new(
-                            [
-                                y.min(100) as u8,
-                                z.min(100) as u8,
-                                x.min(100) as u8,
-                            ],
+                            [y.min(100) as u8, z.min(100) as u8, x.min(100) as u8],
                             50,
                         ),
                     );
@@ -854,7 +851,7 @@ fn main() {
     let mut lights = LightingTree::new(Cube::new(-64, -64, -64, 128));
 
     let now = Instant::now();
-    image2(&mut tree, &mut ltree, &mut lights);
+    image1(&mut tree, &mut ltree, &mut lights);
     let scene_build = now.elapsed();
     println!("Scene build: {scene_build:?}");
 
