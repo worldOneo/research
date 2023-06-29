@@ -1,4 +1,4 @@
-use std::{ops::Mul, path::Path, thread, time::Instant};
+use std::{path::Path, thread, time::Instant};
 
 use image::{ImageBuffer, Rgb};
 
@@ -243,13 +243,14 @@ impl Cube {
         Vec3::new(self.fpos.x + s2, self.fpos.y + s2, self.fpos.z + s2)
     }
 
-    fn max_border_dist(&self, p: Point) -> i64 {
-        (p.x - self.pos.x)
-            .max(p.y - self.pos.y)
-            .max(p.z - self.pos.z)
-            .max(self.pos.x + self.size - p.x)
-            .max(self.pos.y + self.size - p.y)
-            .max(self.pos.z + self.size - p.z)
+    fn max_border_dist(&self, p: &Vec3) -> f64 {
+        let s = self.size as f64;
+        Vec3::new(
+            (p.x - self.fpos.x).abs().max((self.fpos.x + s - p.x).abs()),
+            (p.y - self.fpos.y).abs().max((self.fpos.y + s - p.y).abs()),
+            (p.z - self.fpos.z).abs().max((self.fpos.z + s - p.z).abs()),
+        )
+        .len()
     }
 }
 
@@ -483,20 +484,35 @@ impl LightingTree {
     }
 
     fn insert(&mut self, position: Point, emission_strength: u8) {
+        // if minimimum possible ilumination is usefull insert (=> every voxel in this octet could be iluminated)
+        // else if maximum possible ilumination not usefull break (no child could ever be iluminated)
+        // else offer to children
         let strength = emission_strength_from_u8(emission_strength);
-        let border_brightness =
-            strength / (self.bounds.max_border_dist(position) - 1).pow(2) as f64;
-        if border_brightness > MIN_LIGHTING {
+
+        let max_distance = self.bounds.max_border_dist(&position.voxel_center());
+        let min_brightness = strength / max_distance.powi(2);
+        let is_min_usefull = min_brightness > MIN_LIGHTING;
+        if is_min_usefull {
             self.lights.push(position);
             return;
         }
-        if self.bounds.size == 1 {
+
+        let is_max_usefull = if self.bounds.contains(&position) {
+            true
+        } else {
+            (strength / self.bounds.distance_to(&position.to_vec3()).powi(2)) > MIN_LIGHTING
+        };
+
+        let is_single_voxel_size = self.bounds.size == 1;
+
+        if  is_single_voxel_size || !is_max_usefull {
             return;
         }
-        let child = self.index_of(&position);
+
         self.split();
         if let Some(c) = &mut self.split {
-            c[child].insert(position, emission_strength);
+            c.iter_mut()
+                .for_each(|c| c.insert(position, emission_strength));
         }
     }
 
@@ -577,7 +593,7 @@ const MAX_SAMPLE_STEPS: usize = 100;
 const MAX_DISTANCE: f64 = 1000.;
 const CAMERA_SHAKE: f64 = 1e-3;
 const SOLID_POS_PUSH: f64 = 2e-4;
-const MIN_LIGHTING: f64 = 1. / 300.;
+const MIN_LIGHTING: f64 = 1. / 150.;
 const PUSH_ANALAYZE_DISTANCE: f64 = 1e-4;
 
 #[derive(PartialEq)]
@@ -785,9 +801,11 @@ fn main() {
     let mut tree = Octree::new(Cube::new(-1, -1, -1, 128));
     let mut lights = LightingTree::new(Cube::new(-1, -1, -1, 128));
 
-    image2(&mut tree, &mut ltree, &mut lights);
-
     let now = Instant::now();
+    image1(&mut tree, &mut ltree, &mut lights);
+    let scene_build = now.elapsed();
+    println!("Scene build: {scene_build:?}");
+
     let mut buffer = ImageBuffer::new(600, 600);
     let mut data = Box::new([[0, 0, 0] as Color; 600 * 600]);
     let thread_count = 12;
@@ -811,7 +829,7 @@ fn main() {
             });
         })
     });
-    println!("Elapsed: {:.2?}", now.elapsed());
+    println!("Render: {:.2?}", now.elapsed());
 
     for y in 0..600 {
         for x in 0..600 {
@@ -820,6 +838,6 @@ fn main() {
         }
     }
     let elapsed = now.elapsed();
-    println!("Elapsed: {:.2?}", elapsed);
+    println!("Image Generation: {:.2?}", elapsed);
     buffer.save(&Path::new("out.png")).unwrap();
 }
