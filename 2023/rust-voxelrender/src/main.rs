@@ -219,7 +219,7 @@ fn min_or<T>(a: f64, b: f64, at: T, bt: T) -> (f64, T) {
     return (b, bt);
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct Cube {
     fpos: Vec3,
     size: f64,
@@ -287,8 +287,13 @@ impl Cube {
 }
 
 struct Octree<T> {
-    data: OctreeData<T>,
+    data: OOctree<T>,
     bounds: Cube,
+}
+
+
+struct OOctree<T> {
+    data: OctreeData<T>,
 }
 
 type Color = [u8; 3];
@@ -360,7 +365,7 @@ impl RoughVoxel {
 enum OctreeData<T> {
     Empty,
     Voxel(T),
-    Split(Box<[Octree<T>; 8]>),
+    Split(Box<[OOctree<T>; 8]>),
 }
 
 impl<T> Octree<T>
@@ -369,27 +374,46 @@ where
 {
     fn new(bounds: Cube) -> Self {
         Octree {
-            data: OctreeData::Empty,
+            data: OOctree::new(),
             bounds,
         }
     }
 
     fn insert(&mut self, position: Vec3, voxel: T) {
-        if !self.bounds.containsf(&position) {
+        self.data.insert(&self.bounds, position, voxel);
+    }
+
+
+    fn find_closest(&self, p: &Vec3, dir: &Vec3) -> (Option<&T>, f64) {
+        self.data.find_closest(&self.bounds, p, dir)
+    }
+}
+
+impl<T> OOctree<T>
+where
+    T: Clone,
+{
+    fn new() -> Self {
+        OOctree {
+            data: OctreeData::Empty,
+        }
+    }
+
+    fn insert(&mut self, bounds: &Cube, position: Vec3, voxel: T) {
+        if !bounds.containsf(&position) {
             return;
         }
+        let (idx, subbounds) = self.index_of(bounds, &position);
         match &mut self.data {
             OctreeData::Split(children) => {
-                children
-                    .iter_mut()
-                    .for_each(|c| c.insert(position, voxel.clone()));
+                children[idx].insert(&subbounds, position, voxel);
             }
             OctreeData::Empty => {
-                if self.bounds.size == 1. {
+                if bounds.size == 1. {
                     self.data = OctreeData::Voxel(voxel);
                 } else {
                     self.split();
-                    self.insert(position, voxel);
+                    self.insert(&bounds, position, voxel);
                 }
             }
             OctreeData::Voxel(_) => {
@@ -399,50 +423,50 @@ where
     }
 
     fn split(&mut self) {
-        let Cube {
-            fpos: Vec3 { x, y, z },
-            size,
-        } = self.bounds;
-        let n = size / 2.;
-        let o = 0.;
         self.data = OctreeData::Split(Box::new([
-            Self::new(Cube::new(x + o, y + o, z + o, n)),
-            Self::new(Cube::new(x + o, y + o, z + n, n)),
-            Self::new(Cube::new(x + o, y + n, z + o, n)),
-            Self::new(Cube::new(x + o, y + n, z + n, n)),
-            Self::new(Cube::new(x + n, y + o, z + o, n)),
-            Self::new(Cube::new(x + n, y + o, z + n, n)),
-            Self::new(Cube::new(x + n, y + n, z + o, n)),
-            Self::new(Cube::new(x + n, y + n, z + n, n)),
+            Self::new(),
+            Self::new(),
+            Self::new(),
+            Self::new(),
+            Self::new(),
+            Self::new(),
+            Self::new(),
+            Self::new(),
         ]));
     }
 
-    fn index_of(&self, p: &Vec3) -> usize {
-        let hs = self.bounds.size / 2.;
+    fn index_of(&self, bounds: &Cube, p: &Vec3) -> (usize, Cube) {
+        let hs = bounds.size * 0.5;
+        let mut bounds = *bounds;
         let mut idx = 0;
-        if p.x >= self.bounds.fpos.x + hs {
+        bounds.size = hs;
+        if p.x >= bounds.fpos.x + hs {
             idx |= 0b100;
+            bounds.fpos.x += hs;
         }
-        if p.y >= self.bounds.fpos.y + hs {
+        if p.y >= bounds.fpos.y + hs {
             idx |= 0b010;
+            bounds.fpos.y += hs;
         }
-        if p.z >= self.bounds.fpos.z + hs {
+        if p.z >= bounds.fpos.z + hs {
             idx |= 0b001;
+            bounds.fpos.z += hs;
         }
-        idx
+        (idx, bounds)
     }
 
-    fn find_closest(&self, p: &Vec3, dir: &Vec3) -> (Option<&T>, f64) {
+    fn find_closest(&self, bounds: &Cube, p: &Vec3, dir: &Vec3) -> (Option<&T>, f64) {
         match &self.data {
             OctreeData::Split(subtrees) => {
-                let tree = &subtrees[self.index_of(p)];
-                return tree.find_closest(p, dir);
+                let (idx, bounds) = self.index_of(bounds, p);
+                let tree = &subtrees[idx];
+                return tree.find_closest(&bounds, p, dir);
             }
             OctreeData::Voxel(v) => {
                 return (Some(v), 0.);
             }
             OctreeData::Empty => {
-                return (None, self.bounds.max_marchable_distance(p, dir));
+                return (None, bounds.max_marchable_distance(p, dir));
             }
         }
     }
@@ -797,7 +821,7 @@ fn main() {
     let mut lights = LightingTree::new(Cube::new(-64., -64., -64., 128.));
 
     let now = Instant::now();
-    image2(&mut tree, &mut ltree, &mut lights);
+    image1(&mut tree, &mut ltree, &mut lights);
     let scene_build = now.elapsed();
     println!("Scene build: {scene_build:?}");
 
