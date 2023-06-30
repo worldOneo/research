@@ -2,13 +2,6 @@ use std::{f64::consts::PI, path::Path, thread, time::Instant};
 
 use image::{ImageBuffer, Rgb};
 
-#[derive(Default, Debug, Clone, Copy)]
-struct Point {
-    pub x: i64,
-    pub y: i64,
-    pub z: i64,
-}
-
 #[derive(Debug, Clone, Copy)]
 struct Vec3 {
     pub x: f64,
@@ -23,6 +16,10 @@ impl PartialEq for Vec3 {
 }
 
 impl Vec3 {
+    fn newi(x: i64, y: i64, z: i64) -> Vec3 {
+        Vec3::new(x as f64, y as f64, z as f64)
+    }
+
     fn new(x: f64, y: f64, z: f64) -> Vec3 {
         Vec3 { x, y, z }
     }
@@ -205,6 +202,14 @@ impl Vec3 {
             .add(&axis.cross(self).mulf(sin))
             .add(&axis.mulf(axis.dot(self)).mulf(1. - cos))
     }
+
+    fn voxel_center(&self) -> Vec3 {
+        Vec3::new(
+            self.x.floor() + 0.5,
+            self.y.floor() + 0.5,
+            self.z.floor() + 0.5,
+        )
+    }
 }
 
 fn min_or<T>(a: f64, b: f64, at: T, bt: T) -> (f64, T) {
@@ -216,17 +221,14 @@ fn min_or<T>(a: f64, b: f64, at: T, bt: T) -> (f64, T) {
 
 #[derive(Debug)]
 struct Cube {
-    pos: Point,
     fpos: Vec3,
-    size: i64,
+    size: f64,
 }
 
 impl Cube {
-    fn new(x: i64, y: i64, z: i64, size: i64) -> Cube {
-        let p = Point::new(x, y, z);
+    fn new(x: f64, y: f64, z: f64, size: f64) -> Cube {
         Cube {
-            pos: p,
-            fpos: p.to_vec3(),
+            fpos: Vec3::new(x, y, z),
             size,
         }
     }
@@ -251,15 +253,6 @@ impl Cube {
             || pos.y + size <= p.y
             || pos.z > p.z
             || pos.z + size <= p.z)
-    }
-
-    fn contains(&self, p: &Point) -> bool {
-        !(self.pos.x > p.x
-            || self.pos.x + self.size <= p.x
-            || self.pos.y > p.y
-            || self.pos.y + self.size <= p.y
-            || self.pos.z > p.z
-            || self.pos.z + self.size <= p.z)
     }
 
     fn max_marchable_distance(&self, p: &Vec3, d: &Vec3) -> f64 {
@@ -290,37 +283,6 @@ impl Cube {
             (p.z - self.fpos.z).abs().max((self.fpos.z + s - p.z).abs()),
         )
         .len()
-    }
-}
-
-impl Point {
-    fn new(x: i64, y: i64, z: i64) -> Self {
-        Point { x, y, z }
-    }
-
-    fn to_vec3(&self) -> Vec3 {
-        Vec3 {
-            x: self.x as f64,
-            y: self.y as f64,
-            z: self.z as f64,
-        }
-    }
-
-    fn distance_to(&self, p: &Vec3) -> f64 {
-        let pos = self.to_vec3();
-        let dx = (pos.x - p.x).max(p.x - (pos.x + 1.)).max(0.);
-        let dy = (pos.y - p.y).max(p.y - (pos.y + 1.)).max(0.);
-        let dz = (pos.z - p.z).max(p.z - (pos.z + 1.)).max(0.);
-
-        return (dx * dx + dy * dy + dz * dz).sqrt();
-    }
-
-    fn voxel_center(&self) -> Vec3 {
-        Vec3::new(
-            self.x as f64 + 0.5,
-            self.y as f64 + 0.5,
-            self.z as f64 + 0.5,
-        )
     }
 }
 
@@ -412,8 +374,8 @@ where
         }
     }
 
-    fn insert(&mut self, position: Point, voxel: T) {
-        if !self.bounds.contains(&position) {
+    fn insert(&mut self, position: Vec3, voxel: T) {
+        if !self.bounds.containsf(&position) {
             return;
         }
         match &mut self.data {
@@ -423,7 +385,7 @@ where
                     .for_each(|c| c.insert(position, voxel.clone()));
             }
             OctreeData::Empty => {
-                if self.bounds.size == 1 {
+                if self.bounds.size == 1. {
                     self.data = OctreeData::Voxel(voxel);
                 } else {
                     self.split();
@@ -438,25 +400,25 @@ where
 
     fn split(&mut self) {
         let Cube {
-            pos: Point { x, y, z },
-            fpos: _,
+            fpos: Vec3 { x, y, z },
             size,
         } = self.bounds;
-        let n = size / 2;
+        let n = size / 2.;
+        let o = 0.;
         self.data = OctreeData::Split(Box::new([
-            Self::new(Cube::new(x + 0, y + 0, z + 0, n)),
-            Self::new(Cube::new(x + 0, y + 0, z + n, n)),
-            Self::new(Cube::new(x + 0, y + n, z + 0, n)),
-            Self::new(Cube::new(x + 0, y + n, z + n, n)),
-            Self::new(Cube::new(x + n, y + 0, z + 0, n)),
-            Self::new(Cube::new(x + n, y + 0, z + n, n)),
-            Self::new(Cube::new(x + n, y + n, z + 0, n)),
+            Self::new(Cube::new(x + o, y + o, z + o, n)),
+            Self::new(Cube::new(x + o, y + o, z + n, n)),
+            Self::new(Cube::new(x + o, y + n, z + o, n)),
+            Self::new(Cube::new(x + o, y + n, z + n, n)),
+            Self::new(Cube::new(x + n, y + o, z + o, n)),
+            Self::new(Cube::new(x + n, y + o, z + n, n)),
+            Self::new(Cube::new(x + n, y + n, z + o, n)),
             Self::new(Cube::new(x + n, y + n, z + n, n)),
         ]));
     }
 
     fn index_of(&self, p: &Vec3) -> usize {
-        let hs = (self.bounds.size / 2) as f64;
+        let hs = self.bounds.size / 2.;
         let mut idx = 0;
         if p.x >= self.bounds.fpos.x + hs {
             idx |= 0b100;
@@ -484,33 +446,12 @@ where
             }
         }
     }
-
-    fn query<'a, F>(&'a self, p: &Vec3, rad: f64, mut f: F)
-    where
-        F: FnMut(&T, &Cube) -> (),
-    {
-        self.query_r(p, rad, &mut f)
-    }
-
-    fn query_r<'a, F>(&'a self, p: &Vec3, rad: f64, f: &mut F)
-    where
-        F: FnMut(&T, &Cube) -> (),
-    {
-        if !self.bounds.containsf(p) && self.bounds.distance_to(p) > rad {
-            return;
-        }
-        match &self.data {
-            OctreeData::Empty => {}
-            OctreeData::Voxel(v) => f(v, &self.bounds),
-            OctreeData::Split(tree) => tree.iter().for_each(|t| t.query_r(p, rad, f)),
-        }
-    }
 }
 
 struct LightingTree {
     split: Option<Box<[LightingTree; 8]>>,
     bounds: Cube,
-    lights: Vec<Point>,
+    lights: Vec<Vec3>,
 }
 
 const USEFULL_LIGHT_LIMIT: f64 = 1. / 100.;
@@ -525,7 +466,7 @@ impl LightingTree {
         }
     }
 
-    fn insert(&mut self, position: Point, emission_strength: u8) {
+    fn insert(&mut self, position: Vec3, emission_strength: u8) {
         // if minimimum possible ilumination is usefull insert (=> every voxel in this octet could be iluminated)
         // else if maximum possible ilumination not usefull break (no child could ever be iluminated)
         // else offer to children
@@ -539,14 +480,13 @@ impl LightingTree {
             return;
         }
 
-        let is_max_usefull = if self.bounds.contains(&position) {
+        let is_max_usefull = if self.bounds.containsf(&position) {
             true
         } else {
-            (strength / self.bounds.distance_to(&position.to_vec3()).powi(2))
-                > NOT_USEFULL_LIGHT_LIMIT
+            (strength / self.bounds.distance_to(&position).powi(2)) > NOT_USEFULL_LIGHT_LIMIT
         };
 
-        let is_single_voxel_size = self.bounds.size == 1;
+        let is_single_voxel_size = self.bounds.size == 1.;
 
         if is_single_voxel_size || !is_max_usefull {
             return;
@@ -564,40 +504,40 @@ impl LightingTree {
             return;
         }
         let Cube {
-            pos: Point { x, y, z },
-            fpos: _,
+            fpos: Vec3 { x, y, z },
             size,
         } = self.bounds;
-        let n = size / 2;
+        let n = size / 2.;
+        let o = 0.;
         self.split = Some(Box::new([
-            Self::new(Cube::new(x + 0, y + 0, z + 0, n)),
-            Self::new(Cube::new(x + 0, y + 0, z + n, n)),
-            Self::new(Cube::new(x + 0, y + n, z + 0, n)),
-            Self::new(Cube::new(x + 0, y + n, z + n, n)),
-            Self::new(Cube::new(x + n, y + 0, z + 0, n)),
-            Self::new(Cube::new(x + n, y + 0, z + n, n)),
-            Self::new(Cube::new(x + n, y + n, z + 0, n)),
+            Self::new(Cube::new(x + o, y + o, z + o, n)),
+            Self::new(Cube::new(x + o, y + o, z + n, n)),
+            Self::new(Cube::new(x + o, y + n, z + o, n)),
+            Self::new(Cube::new(x + o, y + n, z + n, n)),
+            Self::new(Cube::new(x + n, y + o, z + o, n)),
+            Self::new(Cube::new(x + n, y + o, z + n, n)),
+            Self::new(Cube::new(x + n, y + n, z + o, n)),
             Self::new(Cube::new(x + n, y + n, z + n, n)),
         ]));
     }
 
-    fn index_of(&self, p: &Point) -> usize {
-        let hs = self.bounds.size / 2;
+    fn index_of(&self, p: &Vec3) -> usize {
+        let hs = self.bounds.size / 2.;
         let mut idx = 0;
-        if p.x >= self.bounds.pos.x + hs {
+        if p.x >= self.bounds.fpos.x + hs {
             idx |= 0b100;
         }
-        if p.y >= self.bounds.pos.y + hs {
+        if p.y >= self.bounds.fpos.y + hs {
             idx |= 0b010;
         }
-        if p.z >= self.bounds.pos.z + hs {
+        if p.z >= self.bounds.fpos.z + hs {
             idx |= 0b001;
         }
         idx
     }
 
     fn index_of_f(&self, p: &Vec3) -> usize {
-        let hs = (self.bounds.size / 2) as f64;
+        let hs = self.bounds.size / 2.;
         let mut idx = 0;
         if p.x >= self.bounds.fpos.x + hs {
             idx |= 0b100;
@@ -613,14 +553,14 @@ impl LightingTree {
 
     fn query<'a, F>(&'a self, p: &Vec3, mut f: F)
     where
-        F: FnMut(&Point) -> (),
+        F: FnMut(&Vec3) -> (),
     {
         self.query_r(p, &mut f)
     }
 
     fn query_r<'a, F>(&'a self, p: &Vec3, f: &mut F)
     where
-        F: FnMut(&Point) -> (),
+        F: FnMut(&Vec3) -> (),
     {
         for c in &self.lights {
             f(c);
@@ -696,7 +636,7 @@ fn direct_color(
 
     // Render light first because it is faster
     let solid_dist = origin.sub(&solidpos).len();
-    let lpos = origin.clone();
+    let lpos = *origin;
     if let (Some(v), lpos, _) = cast_to_hit(lpos, &dir, ltree) {
         if origin.sub(&lpos).len() < solid_dist {
             let light_strength = emission_strength_from_u8(v.emission);
@@ -801,28 +741,28 @@ fn render(
 fn image1(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut LightingTree) {
     for y in -2..=1 {
         for z in -3..0 {
-            solids.insert(Point::new(5, y, z), RoughVoxel::new([200, 200, 200], 150));
+            solids.insert(Vec3::newi(5, y, z), RoughVoxel::new([200, 200, 200], 150));
         }
     }
 
-    let blue_point = Point::new(5, 3, -1);
+    let blue_point = Vec3::newi(5, 3, -1);
     emissions.insert(blue_point, EmissionVoxel::new([100, 200, 255], 30));
     light.insert(blue_point, 30);
 
-    solids.insert(Point::new(1, -1, -1), RoughVoxel::new([240, 130, 130], 254));
-    solids.insert(Point::new(1, -1, -2), RoughVoxel::new([240, 130, 130], 254));
+    solids.insert(Vec3::newi(1, -1, -1), RoughVoxel::new([240, 130, 130], 254));
+    solids.insert(Vec3::newi(1, -1, -2), RoughVoxel::new([240, 130, 130], 254));
 
-    let green_light = Point::new(0, 1, -1);
+    let green_light = Vec3::newi(0, 1, -1);
     emissions.insert(green_light, EmissionVoxel::new([100, 200, 100], 30));
     light.insert(green_light, 30);
 
-    let white_light = Point::new(4, -3, -4);
+    let white_light = Vec3::newi(4, -3, -4);
     emissions.insert(white_light, EmissionVoxel::new([255, 255, 255], 50));
     light.insert(white_light, 50);
 
     for x in -20..40 {
         for y in -20..40 {
-            solids.insert(Point::new(x, y, 0), RoughVoxel::new([255, 255, 255], 250));
+            solids.insert(Vec3::newi(x, y, 0), RoughVoxel::new([255, 255, 255], 250));
         }
     }
 }
@@ -833,15 +773,15 @@ fn image2(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut Lighti
             for y in (0..64).step_by(4) {
                 if x % 8 == 4 && y % 8 == 4 && z % 8 == 4 {
                     emissions.insert(
-                        Point::new(x, y, z),
+                        Vec3::newi(x, y, z),
                         EmissionVoxel::new(
                             [y.min(100) as u8, z.min(100) as u8, x.min(100) as u8],
                             50,
                         ),
                     );
-                    light.insert(Point::new(x, y, z), 50);
+                    light.insert(Vec3::newi(x, y, z), 50);
                 } else {
-                    solids.insert(Point::new(x, y, z), RoughVoxel::new([200, 200, 200], 255));
+                    solids.insert(Vec3::newi(x, y, z), RoughVoxel::new([200, 200, 200], 255));
                 }
             }
         }
@@ -852,12 +792,12 @@ const IMG_W: u32 = 1920;
 const IMG_H: u32 = 1080;
 
 fn main() {
-    let mut ltree = Octree::new(Cube::new(-64, -64, -64, 128));
-    let mut tree = Octree::new(Cube::new(-64, -64, -64, 128));
-    let mut lights = LightingTree::new(Cube::new(-64, -64, -64, 128));
+    let mut ltree = Octree::new(Cube::new(-64., -64., -64., 128.));
+    let mut tree = Octree::new(Cube::new(-64., -64., -64., 128.));
+    let mut lights = LightingTree::new(Cube::new(-64., -64., -64., 128.));
 
     let now = Instant::now();
-    image1(&mut tree, &mut ltree, &mut lights);
+    image2(&mut tree, &mut ltree, &mut lights);
     let scene_build = now.elapsed();
     println!("Scene build: {scene_build:?}");
 
