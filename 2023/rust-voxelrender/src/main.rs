@@ -718,6 +718,11 @@ fn direct_color(
                     let dist_to_dest = vec_to_dest.len();
                     let dir = vec_to_dest.normalized();
                     let (_, solid_hit_pos, _) = cast_to_hit(direct_light_pos, &dir, tree);
+                    let solid_dist = solid_hit_pos.sub(&direct_light_pos).len();
+                    if solid_dist < dist_to_dest {
+                        return;
+                    }
+
                     let (lvoxel, light_hit_pos, status) =
                         cast_to_hit(direct_light_pos, &dir, ltree);
                     if let None = lvoxel {
@@ -727,9 +732,7 @@ fn direct_color(
                         return;
                     }
                     let emission_voxel = lvoxel.unwrap();
-                    let light_dist = light_hit_pos.sub(&direct_light_pos).len();
-                    let solid_dist = solid_hit_pos.sub(&direct_light_pos).len();
-                    if light_hit_pos.voxel_equals(&dest) && light_dist < solid_dist {
+                    if light_hit_pos.voxel_equals(&dest) && dist_to_dest < solid_dist {
                         // color += e.emission * e.color * albedo * (normal \cdot dir)
                         let emission_strength = emission_strength_from_u8(emission_voxel.emission)
                             / ((dist_to_dest - 0.5).powi(2))
@@ -854,7 +857,7 @@ fn main() {
     let mut lights = LightingTree::new(Cube::new(-64, -64, -64, 128));
 
     let now = Instant::now();
-    image2(&mut tree, &mut ltree, &mut lights);
+    image1(&mut tree, &mut ltree, &mut lights);
     let scene_build = now.elapsed();
     println!("Scene build: {scene_build:?}");
 
