@@ -291,7 +291,6 @@ struct Octree<T> {
     bounds: Cube,
 }
 
-
 struct OOctree<T> {
     data: OctreeData<T>,
 }
@@ -339,26 +338,18 @@ fn f_to_color(f: &Vec3) -> Color {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct RoughVoxel {
-    color: Color,
-    roughness: u8,
+enum VoxelMaterial {
+    Rough { color: Color, roughness: u8 },
+    Emission { color: Color, emission: u8 },
 }
 
-#[derive(Debug, Clone, Copy)]
-struct EmissionVoxel {
-    color: Color,
-    emission: u8,
-}
-
-impl EmissionVoxel {
-    fn new(color: Color, emission: u8) -> Self {
-        Self { color, emission }
+impl VoxelMaterial {
+    fn rough(color: Color, roughness: u8) -> Self {
+        Self::Rough { color, roughness }
     }
-}
 
-impl RoughVoxel {
-    fn new(color: Color, roughness: u8) -> Self {
-        Self { color, roughness }
+    fn emissive(color: Color, emission: u8) -> Self {
+        Self::Emission { color, emission }
     }
 }
 
@@ -382,7 +373,6 @@ where
     fn insert(&mut self, position: Vec3, voxel: T) {
         self.data.insert(&self.bounds, position, voxel);
     }
-
 
     fn find_closest(&self, p: &Vec3, dir: &Vec3) -> (Option<&T>, f64) {
         self.data.find_closest(&self.bounds, p, dir)
@@ -637,8 +627,7 @@ where
     return (None, pos, CastStatus::InsufficientSteps);
 }
 
-type MatTree = Octree<RoughVoxel>;
-type EmissionTree = Octree<EmissionVoxel>;
+type MatTree = Octree<VoxelMaterial>;
 
 fn emission_strength_from_u8(u: u8) -> f64 {
     (2_f64).powf(u as f64 / 16.)
@@ -648,7 +637,6 @@ fn direct_color(
     origin: &Vec3,
     dir: &Vec3,
     tree: &MatTree,
-    ltree: &EmissionTree,
     lights: &LightingTree,
     bounces: usize,
 ) -> Vec3 {
@@ -659,64 +647,55 @@ fn direct_color(
     let (voxel, solidpos, _) = cast_to_hit(*origin, &dir, tree);
 
     // Render light first because it is faster
-    let solid_dist = origin.sub(&solidpos).len();
-    let lpos = *origin;
-    if let (Some(v), lpos, _) = cast_to_hit(lpos, &dir, ltree) {
-        if origin.sub(&lpos).len() < solid_dist {
-            let light_strength = emission_strength_from_u8(v.emission);
-            let adjusted_color = color_to_f(&v.color).mulf(light_strength);
-            return adjusted_color;
-        }
+    if let Some(VoxelMaterial::Emission { color, emission }) = voxel {
+        let light_strength = emission_strength_from_u8(emission);
+        let adjusted_color = color_to_f(&color).mulf(light_strength);
+        return adjusted_color;
     }
 
-    if let Some(v) = voxel {
-        let voxpos = solidpos.clone();
+    if let Some(VoxelMaterial::Rough { color, roughness }) = voxel {
         let normal = solidpos.prob_voxel_norm(&dir);
-        let albedo = color_to_f(&v.color);
+        let albedo = color_to_f(&color);
         let direct_light_pos = solidpos.add(&dir.mulf(-SOLID_POS_PUSH));
         let mut currentc = Vec3::new(0., 0., 0.);
         let color = &mut currentc;
         lights.query(&direct_light_pos, |lightvoxel| {
-                    let dest = lightvoxel.voxel_center();
-                    let vec_to_dest = dest.sub(&direct_light_pos);
-                    let dist_to_dest = vec_to_dest.len();
-                    let dir = vec_to_dest.normalized();
-                    let (_, solid_hit_pos, _) = cast_to_hit(direct_light_pos, &dir, tree);
-                    let solid_dist = solid_hit_pos.sub(&direct_light_pos).len();
-                    if solid_dist < dist_to_dest {
-                        return;
-                    }
+            let dest = lightvoxel.voxel_center();
+            let vec_to_dest = dest.sub(&direct_light_pos);
+            let dist_to_dest = vec_to_dest.len();
+            let dir = vec_to_dest.normalized();
+            let (voxel, solid_hit_pos, status) = cast_to_hit(direct_light_pos, &dir, tree);
+            if !solid_hit_pos.voxel_equals(&dest) {
+                return;
+            }
 
-                    let (lvoxel, light_hit_pos, status) =
-                        cast_to_hit(direct_light_pos, &dir, ltree);
-                    if let None = lvoxel {
-                        if status != CastStatus::InsufficientSteps {
-                            panic!("\nMissed Light - Blocked: {:?} Light: {:?}\n Voxel: {:?}\n Dest: {:?}\n LPos: {:?}\n BPos: {:?}\n Start: {:?}\n Normal: {:?}\n Dir: {:?}\n", solid_hit_pos.sub(&direct_light_pos).len(), light_hit_pos.sub(&direct_light_pos).len(), voxpos, dest, light_hit_pos, solid_hit_pos, direct_light_pos, normal, dir);
-                        }
-                        return;
-                    }
-                    let emission_voxel = lvoxel.unwrap();
-                    if light_hit_pos.voxel_equals(&dest) && dist_to_dest < solid_dist {
-                        // color += e.emission * e.color * albedo * (normal \cdot dir)
-                        let emission_strength = emission_strength_from_u8(emission_voxel.emission)
-                            / ((dist_to_dest - 0.5).powi(2))
-                            * normal.dot(&dir);
-                        let mixed_color = albedo.mulf(emission_strength);
-                        *color = color.add(&color_to_f(&emission_voxel.color).mul(&mixed_color));
-                    }
-                });
-        if v.roughness < 255 {
+            if let None = voxel {
+                if status != CastStatus::InsufficientSteps {
+                    panic!("Missed Light");
+                }
+                return;
+            }
+            let emission_voxel = voxel.unwrap();
+            if let VoxelMaterial::Emission { color: light_color, emission } = emission_voxel {
+                // color += e.emission * e.color * albedo * (normal \cdot dir)
+                let emission_strength = emission_strength_from_u8(emission)
+                    / ((dist_to_dest - 0.5).powi(2))
+                    * normal.dot(&dir);
+                let mixed_color = albedo.mulf(emission_strength);
+                *color = color.add(&color_to_f(&light_color).mul(&mixed_color));
+            }
+        });
+        if roughness < 255 {
             // r = d - 2(d \dot n)n
             let reflection = dir.sub(&normal.mulf(&dir.dot(&normal) * 2.));
             let additional_color = direct_color(
                 &direct_light_pos,
                 &reflection,
                 tree,
-                ltree,
                 lights,
                 bounces - 1,
             );
-            let reflected_back = 1. - (1. / (2_f64).powf(4. - v.roughness as f64 / 64.));
+            let reflected_back = 1. - (1. / (2_f64).powf(4. - roughness as f64 / 64.));
             return color.mixf(&additional_color, reflected_back);
         }
         return *color;
@@ -731,7 +710,6 @@ fn render(
     workers: u32,
     worker: u32,
     tree: &MatTree,
-    ltree: &EmissionTree,
     lights: &LightingTree,
 ) {
     let camera = Vec3::new(-4. + CAMERA_SHAKE, -4. + CAMERA_SHAKE, -4. + CAMERA_SHAKE);
@@ -756,56 +734,71 @@ fn render(
                 .rotate_z(PI / 4.)
                 .normalized();
 
-            let direct_color = direct_color(&camera, &dir, tree, ltree, lights, 6);
+            let direct_color = direct_color(&camera, &dir, tree, lights, 6);
             buf[px] = f_to_color(&direct_color);
         }
     }
 }
 
-fn image1(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut LightingTree) {
+fn image1(solids: &mut MatTree, light: &mut LightingTree) {
     for y in -2..=1 {
         for z in -3..0 {
-            solids.insert(Vec3::newi(5, y, z), RoughVoxel::new([200, 200, 200], 150));
+            solids.insert(
+                Vec3::newi(5, y, z),
+                VoxelMaterial::rough([200, 200, 200], 150),
+            );
         }
     }
 
     let blue_point = Vec3::newi(5, 3, -1);
-    emissions.insert(blue_point, EmissionVoxel::new([100, 200, 255], 30));
+    solids.insert(blue_point, VoxelMaterial::emissive([100, 200, 255], 30));
     light.insert(blue_point, 30);
 
-    solids.insert(Vec3::newi(1, -1, -1), RoughVoxel::new([240, 130, 130], 254));
-    solids.insert(Vec3::newi(1, -1, -2), RoughVoxel::new([240, 130, 130], 254));
+    solids.insert(
+        Vec3::newi(1, -1, -1),
+        VoxelMaterial::rough([240, 130, 130], 254),
+    );
+    solids.insert(
+        Vec3::newi(1, -1, -2),
+        VoxelMaterial::rough([240, 130, 130], 254),
+    );
 
     let green_light = Vec3::newi(0, 1, -1);
-    emissions.insert(green_light, EmissionVoxel::new([100, 200, 100], 30));
+    solids.insert(green_light, VoxelMaterial::emissive([100, 200, 100], 30));
     light.insert(green_light, 30);
 
     let white_light = Vec3::newi(4, -3, -4);
-    emissions.insert(white_light, EmissionVoxel::new([255, 255, 255], 50));
+    solids.insert(white_light, VoxelMaterial::emissive([255, 255, 255], 50));
     light.insert(white_light, 50);
 
     for x in -20..40 {
         for y in -20..40 {
-            solids.insert(Vec3::newi(x, y, 0), RoughVoxel::new([255, 255, 255], 250));
+            solids.insert(
+                Vec3::newi(x, y, 0),
+                VoxelMaterial::rough([255, 255, 255], 250),
+            );
         }
     }
 }
 
-fn image2(solids: &mut MatTree, emissions: &mut EmissionTree, light: &mut LightingTree) {
+fn image2(solids: &mut MatTree, light: &mut LightingTree) {
     for x in (0..64).step_by(4) {
         for z in (0..64).step_by(4) {
             for y in (0..64).step_by(4) {
                 if x % 8 == 4 && y % 8 == 4 && z % 8 == 4 {
-                    emissions.insert(
+                    solids.insert(
                         Vec3::newi(x, y, z),
-                        EmissionVoxel::new(
+                        VoxelMaterial::emissive(
                             [y.min(100) as u8, z.min(100) as u8, x.min(100) as u8],
                             50,
                         ),
                     );
                     light.insert(Vec3::newi(x, y, z), 50);
                 } else {
-                    solids.insert(Vec3::newi(x, y, z), RoughVoxel::new([200, 200, 200], 255));
+                    solids.insert(
+                        Vec3::newi(x, y, z),
+                        VoxelMaterial::rough([200, 200, 200], 255),
+                    );
                 }
             }
         }
@@ -816,12 +809,11 @@ const IMG_W: u32 = 1920;
 const IMG_H: u32 = 1080;
 
 fn main() {
-    let mut ltree = Octree::new(Cube::new(-64., -64., -64., 128.));
     let mut tree = Octree::new(Cube::new(-64., -64., -64., 128.));
     let mut lights = LightingTree::new(Cube::new(-64., -64., -64., 128.));
 
     let now = Instant::now();
-    image1(&mut tree, &mut ltree, &mut lights);
+    image1(&mut tree, &mut lights);
     let scene_build = now.elapsed();
     println!("Scene build: {scene_build:?}");
 
@@ -830,7 +822,6 @@ fn main() {
     let thread_count = 12;
     let chunks = data.chunks_mut((IMG_H as usize / thread_count) * IMG_W as usize);
     let treeref = &tree;
-    let ltreeref = &ltree;
     let lighting = &lights;
     thread::scope(|s| {
         chunks.enumerate().for_each(|(i, d)| {
@@ -842,7 +833,6 @@ fn main() {
                     thread_count as u32,
                     i as u32,
                     treeref,
-                    ltreeref,
                     lighting,
                 )
             });
