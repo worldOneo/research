@@ -51,21 +51,29 @@ fn create_cube(position: vec3<f32>, size: f32) -> Cube {
 }
 
 const F32_MAX = 3.40282347e+38;
+const YANK = 1.e-5;
 
-fn next_plane_intersection(origin: vec3<f32>, point: vec3<f32>, dir: vec3<f32>) -> f32 {
-    let relative_position = origin - point;
-    let distance = relative_position / dir;
-    return min(
-        min(select(F32_MAX, distance.x, distance.x > 0.), select(F32_MAX, distance.y, distance.y > 0.)),
-        select(F32_MAX, distance.z, distance.z > 0.)
-    );
+struct Marchable {
+    distance: f32,
+    yank: vec3<f32>,
 }
 
-fn cube_max_marchable_distance(bounds: Cube, point: vec3<f32>, dir: vec3<f32>) -> f32 {
-    let near = (bounds.position - point) / dir;
-    let far = (bounds.position + bounds.size - point) / dir;
-    let smallest = min(abs(near), abs(far));
-    return min(next_plane_intersection(bounds.position, point, dir), next_plane_intersection(bounds.position + bounds.size, point, dir));
+fn cube_max_marchable_distance(bounds: Cube, point: vec3<f32>, dir: vec3<f32>) -> Marchable {
+    let near = bounds.position;
+    let far = bounds.position + bounds.size;
+    let voxel_wall = vec3<f32>(
+        select(near.x, far.x, dir.x > 0.),
+        select(near.y, far.y, dir.y > 0.),
+        select(near.z, far.z, dir.z > 0.),
+    );
+    let distance = abs((voxel_wall - point) / dir);
+    if distance.x < distance.y && distance.x < distance.z {
+        return Marchable(distance.x, vec3<f32>(select(-YANK, YANK, dir.x > 0.), 0., 0.));
+    }
+    if distance.y < distance.z {
+        return Marchable(distance.y, vec3<f32>(0., select(-YANK, YANK, dir.y > 0.), 0.));
+    }
+    return Marchable(distance.z, vec3<f32>(0., 0., select(-YANK, YANK, dir.z > 0.)));
 }
 
 //
@@ -77,7 +85,7 @@ struct Ray {
     dir: vec3<f32>,
 }
 
-fn cube_planes_ray_intersection_dist(cube: Cube, ray: Ray) -> f32 {
+fn cube_planes_ray_intersection_dist(cube: Cube, ray: Ray) -> Marchable {
     return cube_max_marchable_distance(cube, ray.position, ray.dir);
 }
 
@@ -85,7 +93,6 @@ fn distance_to_cube(cube: Cube, point: vec3<f32>) -> f32 {
     var d = abs((cube.position + cube.size / 2.) - point) - cube.size / 2.;
     return min(max(d.x, max(d.y, d.z)), 0.0) + length(max(d, vec3<f32>(0.0)));
 }
-
 
 //
 // --- Ray tracing
@@ -109,14 +116,14 @@ fn cast_to_hit(ray: Ray) -> HitResult {
     var travelled = 0.;
     var hit = chunk_query_ray(ray);
     for (var i = 0; i < MAX_STEPS; i++) {
-        travelled += hit.distance;
+        travelled += hit.distance.distance;
         if travelled > 1000. {
             return HitResult(i, cast_max, ray.position, hit);
         }
         if hit.hit {
             return HitResult(i, travelled, ray.position, hit);
         }
-        ray.position += (hit.distance + 1.e-5) * ray.dir;
+        ray.position += hit.distance.distance * ray.dir + hit.distance.yank;
         hit = chunk_query_ray(ray);
     }
     return HitResult(MAX_STEPS, cast_max, ray.position, hit);
@@ -208,13 +215,13 @@ fn chunk_material(position: vec3<i32>) -> Material {
 struct ChunkQueryResult {
     hit: bool,
     material: Material,
-    distance: f32,
+    distance: Marchable,
 }
 
 fn chunk_query_ray(ray: Ray) -> ChunkQueryResult {
     let material = chunk_material_f(ray.position);
     if material_present(material) {
-        return ChunkQueryResult(true, material, 0.);
+        return ChunkQueryResult(true, material, Marchable(0., vec3<f32>(0.)));
     }
     let travel_distance = cube_planes_ray_intersection_dist(Cube(floor(ray.position), 1.), ray);
     return ChunkQueryResult(false, material, travel_distance);
@@ -252,8 +259,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let rot_dir2 = quaternion_rotate(rot2, rot_dir);
     let ray = Ray(render_data.camera, rot_dir2);
     let hit = cast_to_hit(ray);
-    
-    // var col = vec3<f32>(pow(hit.distance / 10., 4.));
+
+    // var col = vec3<f32>(f32(hit.jumps) / 64.);
     let col = select(vec3<f32>(0.), material_color(hit.hit.material), hit.hit.hit);
 
     return vec4<f32>(col, 1.0);
