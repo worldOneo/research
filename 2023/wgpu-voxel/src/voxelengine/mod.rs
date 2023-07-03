@@ -1,8 +1,8 @@
-use std::{default, f32::consts::PI, time::Instant};
+use std::{f32::consts::PI, time::Instant};
 
 use cgmath::prelude::*;
-use cgmath::{InnerSpace, Quaternion, Rad, Rotation, Vector2, Vector3};
-use wgpu::util::DeviceExt;
+use cgmath::{Quaternion, Rad, Rotation, Vector3};
+
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
@@ -11,33 +11,8 @@ use winit::{
 
 use winit::window::Window;
 
-#[repr(C)]
-#[derive(Default, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct RenderInputData {
-    dim: [f32; 2],
-    _pad0: [f32; 2],
-    camera: [f32; 3],
-    _pad1: [f32; 1],
-    dir: [f32; 2],
-    _pad2: [f32; 2],
-}
-
-// impl RenderInputData {
-//     fn to_raw(&self) -> RenderInputRaw {
-//         let [dx, dy] = self.dim;
-//         let [cx, cy, cz] = self.camera;
-//         let [mx, my] = self.mouse;
-//         RenderInputRaw {
-//             data: [dx, dy, cx, cy, cz, mx, my],
-//             buff: [0; 20],
-//         }
-//     }
-// }
-
-// struct RenderInputRaw {
-//     data: [f32; 2 + 3 + 2],
-//     buff: [u8; 20],
-// }
+mod buffers;
+mod world;
 
 struct State {
     surface: wgpu::Surface,
@@ -48,9 +23,8 @@ struct State {
     window: Window,
     render_pipeline: wgpu::RenderPipeline,
 
-    render_input: RenderInputData,
-    render_input_buffer: wgpu::Buffer,
-    render_input_bind_group: wgpu::BindGroup,
+    render_input: buffers::Data<buffers::RenderInputData>,
+    chunk: buffers::Data<world::Chunk>,
 }
 
 impl State {
@@ -123,43 +97,13 @@ impl State {
             source: wgpu::ShaderSource::Wgsl(include_str!("../shader.wgsl").into()),
         });
 
-        let mut render_input = RenderInputData::default();
-        render_input.dim = [0., 0.];
-
-        let render_input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Render Input Buffer"),
-            contents: bytemuck::cast_slice(&[render_input]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let render_input_binding_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-                label: Some("render_input_layout"),
-            });
-
-        let render_input_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("screen_bind_group"),
-            layout: &render_input_binding_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: render_input_buffer.as_entire_binding(),
-            }],
-        });
+        let render_input = buffers::create_render_input_buffer(&device);
+        let chunk = buffers::create_chunk_buffer(&device);
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&render_input_binding_group_layout],
+                bind_group_layouts: &[&render_input.layout, &chunk.layout],
                 push_constant_ranges: &[],
             });
 
@@ -210,10 +154,10 @@ impl State {
             queue,
             config,
             size,
-            render_input,
             render_pipeline,
-            render_input_buffer,
-            render_input_bind_group,
+
+            render_input,
+            chunk,
         }
     }
 
@@ -266,7 +210,8 @@ impl State {
                 depth_stencil_attachment: None,
             });
             render_pass.set_pipeline(&self.render_pipeline); // 2.
-            render_pass.set_bind_group(0, &self.render_input_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.render_input.bind_group, &[]);
+            render_pass.set_bind_group(1, &self.chunk.bind_group, &[]);
             render_pass.draw(0..6, 0..2); // 3.
         }
 
@@ -310,7 +255,7 @@ pub async fn run() {
     let mut state: State = State::new(window).await;
     let mut controller = Controlls::default();
     let mut time = Instant::now();
-    let speed = 0.3;
+    let speed = 0.5;
     let mut moving = false;
     let mut prev_mouse_pos: Option<winit::dpi::PhysicalPosition<f64>> = None;
 
@@ -321,20 +266,20 @@ pub async fn run() {
             let dx = directional_speed(delta, speed, controller.forward, controller.backward);
             let dy = directional_speed(delta, speed, controller.right, controller.left);
             let dz = directional_speed(delta, speed, controller.up, controller.down);
-            let [x, y, z] = state.render_input.camera;
+            let [x, y, z] = state.render_input.data.camera;
 
             let wasd_vec = Vector3::new(dx, dy, 0.);
             let rot = Quaternion::from_angle_z(Rad(controller.mousex));
             let rot_vel = rot.rotate_vector(wasd_vec);
 
-            state.render_input.camera = [x + rot_vel.x, y + rot_vel.y, z + dz];
-            state.render_input.dir = [controller.mousex, controller.mousey];
+            state.render_input.data.camera = [x + rot_vel.x, y + rot_vel.y, z + dz];
+            state.render_input.data.dir = [controller.mousex, controller.mousey];
 
             // println!("{:?}", state.render_input.camera);
             state.queue.write_buffer(
-                &state.render_input_buffer,
+                &state.render_input.buffer,
                 0,
-                bytemuck::cast_slice(&[state.render_input]),
+                bytemuck::cast_slice(&[state.render_input.data]),
             );
 
             state.update();
@@ -416,12 +361,12 @@ pub async fn run() {
                     }
                     WindowEvent::Resized(physical_size) => {
                         state.resize(*physical_size);
-                        state.render_input.dim =
+                        state.render_input.data.dim =
                             [physical_size.width as f32, physical_size.height as f32];
                         state.queue.write_buffer(
-                            &state.render_input_buffer,
+                            &state.render_input.buffer,
                             0,
-                            bytemuck::cast_slice(&[state.render_input]),
+                            bytemuck::cast_slice(&[state.render_input.data]),
                         );
                     }
                     WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
