@@ -26,8 +26,8 @@ impl MaterialType {
     fn to_byte(&self) -> u8 {
         match self {
             MaterialType::Absent => 0,
-            MaterialType::Rough(v) => 0b01 | (v >> 2),
-            MaterialType::Emissive(v) => 0b11 | (v >> 2),
+            MaterialType::Rough(v) => (0b01 << 6) | (v >> 2),
+            MaterialType::Emissive(v) => (0b11 << 6) | (v >> 2),
         }
     }
 }
@@ -41,7 +41,7 @@ impl Material {
 
     pub fn set_type(&self, t: MaterialType) -> Self {
         Material {
-            data: ((self.data >> 8) << 8) | t.to_byte() as u32,
+            data: (self.data & !0xFF) | t.to_byte() as u32,
         }
     }
 
@@ -61,16 +61,16 @@ const CHUNK_DIM: usize = 16;
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Chunk {
     location: [i32; 3],
-    _pad0: i32,
     data: [Material; CHUNK_DIM * CHUNK_DIM * CHUNK_DIM],
+    _pad0: u32,
 }
 
 impl Chunk {
     pub fn new(x: i32, y: i32, z: i32) -> Self {
         let mut chunk: Chunk = unsafe { std::mem::MaybeUninit::uninit().assume_init() }; // Rust can't zero init big slices.
-        // chunk.data = chunk
-        //     .data
-        //     .map(|_| Material::new(Color::new(0, 0, 0), MaterialType::Absent));
+        chunk.data = chunk
+            .data
+            .map(|_| Material::new(Color::new(0, 0, 0), MaterialType::Absent));
         chunk.location = [x, y, z];
         chunk
     }

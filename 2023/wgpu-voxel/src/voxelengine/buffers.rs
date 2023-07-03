@@ -64,17 +64,34 @@ pub fn create_render_input_buffer(device: &Device) -> Data<RenderInputData> {
 
 pub fn create_chunk_buffer(device: &Device) -> Data<world::Chunk> {
     let mut chunk = world::Chunk::new(0, 0, 0);
-    // chunk.set_material(
-    //     3,
-    //     0,
-    //     0,
-    //     world::Material::new(
-    //         world::Color::new(100, 255, 100),
-    //         world::MaterialType::Rough(255),
-    //     ),
-    // );
-
-    // println!("{:?}", chunk);
+    chunk.set_material(
+        3,
+        1,
+        1,
+        world::Material::new(
+            world::Color::new(200, 100, 100),
+            world::MaterialType::Rough(255),
+        ),
+    );
+    chunk.set_material(
+        3,
+        2,
+        1,
+        world::Material::new(
+            world::Color::new(100, 200, 100),
+            world::MaterialType::Rough(255),
+        ),
+    );
+    chunk.set_material(
+        3,
+        3,
+        1,
+        world::Material::new(
+            world::Color::new(100, 100, 200),
+            world::MaterialType::Rough(255),
+        ),
+    );
+    println!("{:?}", chunk);
 
     let chunk_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Chunk Buffer"),
