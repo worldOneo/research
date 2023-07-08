@@ -17,7 +17,8 @@ pub struct RenderInputData {
     pub camera: [f32; 3],
     _pad1: [f32; 1],
     pub dir: [f32; 2],
-    _pad2: [f32; 2],
+    pub frame: u32,
+    _pad3: [f32; 4],
 }
 
 pub fn create_render_input_buffer(device: &Device) -> Data<RenderInputData> {
@@ -91,7 +92,15 @@ pub fn create_chunk_buffer(device: &Device) -> Data<world::Chunk> {
             world::MaterialType::Rough(255),
         ),
     );
-    println!("{:?}", chunk);
+    chunk.set_material(
+        3,
+        2,
+        2,
+        world::Material::new(
+            world::Color::new(100, 100, 200),
+            world::MaterialType::Emissive(50),
+        ),
+    );
 
     let chunk_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Chunk Buffer"),

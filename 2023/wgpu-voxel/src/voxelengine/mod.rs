@@ -261,6 +261,8 @@ pub async fn run() {
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::RedrawRequested(window_id) if window_id == state.window().id() => {
+            (state.render_input.data.frame, _) = state.render_input.data.frame.overflowing_add(1);
+
             let delta = time.elapsed().as_secs_f32();
             time = Instant::now();
             let dx = directional_speed(delta, speed, controller.forward, controller.backward);
