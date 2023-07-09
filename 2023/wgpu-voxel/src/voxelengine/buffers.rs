@@ -10,15 +10,23 @@ pub struct Data<T> {
 }
 
 #[repr(C)]
+#[derive(Debug, Default, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Camera {
+    pub position: [f32; 3],
+    _pad0: [f32; 1],
+    pub dir: [f32; 2],
+    _pad1: [f32; 2],
+}
+
+#[repr(C)]
 #[derive(Default, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct RenderInputData {
     pub dim: [f32; 2],
     _pad0: [f32; 2],
-    pub camera: [f32; 3],
-    _pad1: [f32; 1],
-    pub dir: [f32; 2],
+    pub camera: Camera,
+    pub old_camera: Camera,
     pub frame: u32,
-    _pad3: [f32; 4],
+    _pad3: [f32; 3],
 }
 
 pub fn create_render_input_buffer(device: &Device) -> Data<RenderInputData> {
@@ -146,13 +154,13 @@ pub struct TextureThing {
     pub layout: BindGroupLayout,
 }
 
-pub fn create_svgf_buffer(device: &Device, items: usize) -> TextureThing {
+pub fn create_svgf_buffer(device: &Device) -> TextureThing {
     let svgf_buffer = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("SVGF Buffer"),
         size: wgpu::Extent3d {
             width: 1920,
             height: 1080,
-            depth_or_array_layers: 1,
+            depth_or_array_layers: 2,
         },
         mip_level_count: 1,
         sample_count: 1,
@@ -170,9 +178,9 @@ pub fn create_svgf_buffer(device: &Device, items: usize) -> TextureThing {
                 ty: wgpu::BindingType::StorageTexture {
                     access: wgpu::StorageTextureAccess::ReadWrite,
                     format: wgpu::TextureFormat::Rgba32Uint,
-                    view_dimension: wgpu::TextureViewDimension::D2,
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
                 },
-                count: Some(1.try_into().unwrap()),
+                count: Some(2.try_into().unwrap()),
             }],
             label: Some("svgf_layout"),
         });

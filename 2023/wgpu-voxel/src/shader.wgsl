@@ -160,7 +160,7 @@ fn ray_trace(ray: Ray) -> HitResult {
         hit.color = adjusted_color;
         return hit;
     }
-    for (var i = 0; i < 16; i++) {
+    for (var i = 0; i < 4; i++) {
         let ray = Ray(hit.destination + hit.query.normal * 0.01, unit_vec_on_hemisphere(hit.query.normal));
         let bounce = cast_to_hit(ray);
         if material_type(bounce.query.material) != MATERIAL_TYPE_EMISSIVE {
@@ -168,7 +168,7 @@ fn ray_trace(ray: Ray) -> HitResult {
         }
         color += albedo * bounce.color;
     }
-    hit.color = color / 16.;
+    hit.color = color / 4.;
     return hit;
 }
 
@@ -359,9 +359,31 @@ struct FrameInfo {
     arr: array<MomentInfo>,
 }
 
+fn world_space_to_screen_space(camera_position: vec3<f32>, rotation: vec2<f32>, position_ws: vec3<f32>, dim: vec2<u32>) -> vec2<i32> {
+    // undo tracing
+    let norm = normalize(camera_position - position_ws);
+    
+    // undo up/down rotation
+    let unrot2 = create_quaternion_rotation(vec3<f32>(0.0, 0., 1.0), -rotation.x);
+    let rot_dir2 = quaternion_rotate(unrot2, norm);
+    
+    // undo left/right rotation
+    let unrot = create_quaternion_rotation(vec3<f32>(0.0, 1.0, 0.0), -rotation.y);
+    let rot_dir = quaternion_rotate(unrot, rot_dir2);
+    
+    // undo normalization
+    // n = v / l => l = v / n
+    let len = VERY_ODD_FOV_NUMBER / rot_dir.x;
+    let stretched = rot_dir.yz * len;
+    
+    // undo aspect ratio to convert back to UV
+    let aspect = render_data.screen / render_data.screen.x;
+    let in_pos = stretched / aspect;
 
+    // calculate screen space coordinates
+    return vec2<i32>(((in_pos + 1.) / 2.) * vec2<f32>(dim));
+}
 
-// Pack the GBuffer struct into a vec4.
 fn packMoment(gbuf: MomentInfo) -> vec4<u32> {
     var p = vec4<u32>(0u);
     p.x = bits_f32_as_u8(gbuf.albedo.r) | (bits_f32_as_u8(gbuf.albedo.g) << 8u) | (bits_f32_as_u8(gbuf.albedo.b) << 16u) | (bits_f32_as_u8(gbuf.emittance) << 24u);
@@ -372,7 +394,6 @@ fn packMoment(gbuf: MomentInfo) -> vec4<u32> {
     return p;
 }
 
-// Unpack the GBuffer struct from a vec4.
 fn unpackMoment(p: vec4<u32>) -> MomentInfo {
     var moment: MomentInfo;
     moment.albedo.r = bits_u8_as_f32(p.x);
@@ -391,20 +412,26 @@ fn unpackMoment(p: vec4<u32>) -> MomentInfo {
 }
 
 @group(2)@binding(0)
-var moments: texture_storage_2d<rgba32uint, read_write>;
+var moments: texture_storage_2d_array<rgba32uint, read_write>;
 
 // Fragment shader
 
+struct Camera {
+    position: vec3<f32>,
+    rotation: vec2<f32>,
+}
 
 struct RenderData {
     screen: vec2<f32>,
-    camera: vec3<f32>,
-    rotations: vec2<f32>,
+    camera: Camera,
+    old_camera: Camera,
     frame: u32,
 };
 
 @group(0)@binding(0)
 var<uniform> render_data: RenderData;
+
+const VERY_ODD_FOV_NUMBER: f32 = 2.0;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -412,29 +439,38 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     wang_hash_init(coords, render_data.frame);
     let cube = create_cube(vec3(3., 0., 0.), 1.0);
 
-    let streched_xy_rot = (in.position.xy * render_data.screen) / render_data.screen.x;
+    let aspect = render_data.screen / render_data.screen.x;
+    let streched_xy_rot = in.position.xy * aspect;
 
-    let dir = normalize(vec3<f32>(2.0, streched_xy_rot.x, streched_xy_rot.y));
-    let rot = create_quaternion_rotation(vec3<f32>(0.0, 1.0, 0.0), render_data.rotations.y);
+    let dir = normalize(vec3<f32>(VERY_ODD_FOV_NUMBER, streched_xy_rot.x, streched_xy_rot.y));
+    let rot = create_quaternion_rotation(vec3<f32>(0.0, 1.0, 0.0), render_data.camera.rotation.y);
     let rot_dir = quaternion_rotate(rot, dir);
-    let rot2 = create_quaternion_rotation(vec3<f32>(0.0, 0., 1.0), render_data.rotations.x);
+    let rot2 = create_quaternion_rotation(vec3<f32>(0.0, 0., 1.0), render_data.camera.rotation.x);
     let rot_dir2 = quaternion_rotate(rot2, rot_dir);
-    let ray = Ray(render_data.camera, rot_dir2);
+    let ray = Ray(render_data.camera.position, rot_dir2);
     let hit = ray_trace(ray);
-    let old_moment = textureLoad(moments, vec2<i32>(coords));
+
+    // temporal accumulation
+    let reconstructed_coords = world_space_to_screen_space(render_data.old_camera.position, render_data.old_camera.rotation, hit.destination, vec2<u32>(render_data.screen));
+    let buffer_switch_read_offset = select(0, 1, (render_data.frame & 1u) == 0u);
+    let buffer_switch_write_offset = select(1, 0, (render_data.frame & 1u) == 0u);
+
+    let old_moment = textureLoad(moments, reconstructed_coords, buffer_switch_read_offset);
     let unpacked_moment = unpackMoment(old_moment);
     var new_moment: MomentInfo;
-    new_moment.albedo = mix(hit.color, unpacked_moment.albedo, 0.75);
+    new_moment.albedo += mix(hit.color, unpacked_moment.albedo, 0.9);
     if render_data.frame == 0u {
         new_moment.albedo = hit.color;
     }
-    textureStore(moments, vec2<i32>(coords), packMoment(new_moment));
+    textureStore(moments, vec2<i32>(coords), buffer_switch_write_offset, packMoment(new_moment));
 
     // var col = vec3<f32>(f32(hit.jumps) / 64.);
     // let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), (hit.query.normal + 1.) / 2., hit.query.present);
     // let col = rand_unit_vec();
     // let col = vec3<f32>(hit.distance / 20.);
+    // let col = select(abs(vec3<f32>(vec2<f32>(vec2<u32>(reconstructed_coords.xy) - coords.xy) / render_data.screen.xy, 1.)), vec3<f32>(0.), all(vec2<u32>(reconstructed_coords) == coords));
     let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), new_moment.albedo, hit.query.present);
+    // let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), hit.color, hit.query.present);
 
     return vec4<f32>(col, 1.0);
 }

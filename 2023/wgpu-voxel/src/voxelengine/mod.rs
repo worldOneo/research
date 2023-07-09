@@ -103,7 +103,7 @@ impl State {
 
         let render_input = buffers::create_render_input_buffer(&device);
         let chunk = buffers::create_chunk_buffer(&device);
-        let svgf = buffers::create_svgf_buffer(&device, 1920 * 1080 * 2); // TODO: Automatically resize
+        let svgf = buffers::create_svgf_buffer(&device); // TODO: Automatically resize
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -276,16 +276,18 @@ pub async fn run() {
             let dx = directional_speed(delta, speed, controller.forward, controller.backward);
             let dy = directional_speed(delta, speed, controller.right, controller.left);
             let dz = directional_speed(delta, speed, controller.up, controller.down);
-            let [x, y, z] = state.render_input.data.camera;
+            let [x, y, z] = state.render_input.data.camera.position;
 
             let wasd_vec = Vector3::new(dx, dy, 0.);
             let rot = Quaternion::from_angle_z(Rad(controller.mousex));
             let rot_vel = rot.rotate_vector(wasd_vec);
 
-            state.render_input.data.camera = [x + rot_vel.x, y + rot_vel.y, z + dz];
-            state.render_input.data.dir = [controller.mousex, controller.mousey];
+            let old_camera = state.render_input.data.camera.clone();
+            state.render_input.data.camera.position = [x + rot_vel.x, y + rot_vel.y, z + dz];
+            state.render_input.data.camera.dir = [controller.mousex, controller.mousey];
+            state.render_input.data.old_camera = old_camera.clone();
 
-            // println!("{:?}", state.render_input.camera);
+            // println!("{:?} {:?}", state.render_input.data.camera, state.render_input.data.old_camera);
             state.queue.write_buffer(
                 &state.render_input.buffer,
                 0,
