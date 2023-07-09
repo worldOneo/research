@@ -25,6 +25,7 @@ struct State {
 
     render_input: buffers::Data<buffers::RenderInputData>,
     chunk: buffers::Data<world::Chunk>,
+    svgf: buffers::TextureThing,
 }
 
 impl State {
@@ -57,7 +58,10 @@ impl State {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
+                    features: wgpu::Features::BUFFER_BINDING_ARRAY
+                        | wgpu::Features::TEXTURE_BINDING_ARRAY
+                        | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
+                        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                     // WebGL doesn't support all of wgpu's features, so if
                     // we're building for the web we'll have to disable some.
                     limits: if cfg!(target_arch = "wasm32") {
@@ -99,11 +103,12 @@ impl State {
 
         let render_input = buffers::create_render_input_buffer(&device);
         let chunk = buffers::create_chunk_buffer(&device);
+        let svgf = buffers::create_svgf_buffer(&device, 1920 * 1080 * 2); // TODO: Automatically resize
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&render_input.layout, &chunk.layout],
+                bind_group_layouts: &[&render_input.layout, &chunk.layout, &svgf.layout],
                 push_constant_ranges: &[],
             });
 
@@ -158,6 +163,7 @@ impl State {
 
             render_input,
             chunk,
+            svgf,
         }
     }
 
@@ -212,6 +218,8 @@ impl State {
             render_pass.set_pipeline(&self.render_pipeline); // 2.
             render_pass.set_bind_group(0, &self.render_input.bind_group, &[]);
             render_pass.set_bind_group(1, &self.chunk.bind_group, &[]);
+            render_pass.set_bind_group(2, &self.svgf.bind_group, &[]);
+
             render_pass.draw(0..6, 0..2); // 3.
         }
 

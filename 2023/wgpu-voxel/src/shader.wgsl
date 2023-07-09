@@ -133,7 +133,7 @@ fn cast_to_hit(ray: Ray) -> HitResult {
     var query = chunk_query_ray(ray);
     for (var i = 0; i < MAX_STEPS; i++) {
         travelled += query.distance.distance;
-        if travelled > 1000. {
+        if travelled > 10. {
             return HitResult(i, CAST_MAX, ray.position, query, material_color(query.material));
         }
         if query.present {
@@ -160,15 +160,15 @@ fn ray_trace(ray: Ray) -> HitResult {
         hit.color = adjusted_color;
         return hit;
     }
-    for (var i = 0; i < 6; i++) {
-        let ray = Ray(hit.destination + hit.query.normal * 0.01, normalize(hit.query.normal + rand_unit_vec()));
+    for (var i = 0; i < 16; i++) {
+        let ray = Ray(hit.destination + hit.query.normal * 0.01, unit_vec_on_hemisphere(hit.query.normal));
         let bounce = cast_to_hit(ray);
         if material_type(bounce.query.material) != MATERIAL_TYPE_EMISSIVE {
             continue;
         }
-        color += albedo * bounce.color * inverseSqrt(bounce.distance) * dot(ray.dir, hit.query.normal);
+        color += albedo * bounce.color;
     }
-    hit.color = color;
+    hit.color = color / 16.;
     return hit;
 }
 
@@ -183,6 +183,15 @@ fn bits_get_byte_n(data: u32, n: u32) -> u32 {
 fn bits_get_range(data: u32, start: u32, stop: u32) -> u32 {
     return ((data >> start) & ((2u << (stop - start)) - 1u));
 }
+
+fn bits_f32_as_u8(v: f32) -> u32 {
+    return u32(clamp(v, 0.0, 1.0) * 255.0) & 0xFFu;
+}
+
+fn bits_u8_as_f32(v: u32) -> f32 {
+    return f32(v & 0xFFu) * (1.0 / 255.0);
+}
+
 
 //
 // --- Material
@@ -302,13 +311,26 @@ fn rand_float() -> f32 {
 
 const TWO_PI = 6.28318530718;
 
-fn rand_unit_vec() -> vec3<f32> {
-    let z = rand_float() * 2. - 1.;
-    let a = rand_float() * TWO_PI;
-    let r = sqrt(1.0f - z * z);
-    let x = r * cos(a);
-    let y = r * sin(a);
-    return vec3(x, y, z);
+// https://graphics.pixar.com/library/OrthonormalB/paper.pdf
+fn orthonormal_basis(n: vec3<f32>, b1: ptr<function, vec3<f32>>, b2: ptr<function, vec3<f32>>) {
+    let s = select(-1., 1., n.z >= 0.0);
+    let a = -1.0 / (s + n.z);
+    let b = n.x * n.y * a;
+    *b1 = vec3(1.0 + s * n.x * n.x * a, s * b, -s * n.x);
+    *b2 = vec3(b, s + n.y * n.y * a, -n.y);
+}
+
+fn unit_vec_on_hemisphere(n: vec3<f32>) -> vec3<f32> {
+    let r = rand_float();
+    let angle = rand_float() * TWO_PI;
+    let sr = sqrt(r);
+    let p = vec2<f32>(sr * cos(angle), sr * sin(angle));
+    let ph = vec3(p.xy, sqrt(1.0 - dot(p, p)));
+
+    var b1 = vec3<f32>(0.);
+    var b2 = vec3<f32>(0.);
+    orthonormal_basis(n, &b1, &b2);
+    return b1 * ph.x + b2 * ph.y + n * ph.z;
 }
 
 //
@@ -317,6 +339,59 @@ fn rand_unit_vec() -> vec3<f32> {
 
 @group(1)@binding(0)
 var<storage, read_write> chunk: Chunk;
+
+//
+// --- SVGF or smth idk
+//
+
+struct MomentInfo {
+    depth: f32,
+    emittance: f32,
+    variance: f32,
+    irradiance: f32,
+    albedo: vec3<f32>,
+    normal: vec3<f32>,
+}
+
+struct FrameInfo {
+    camera: vec3<f32>,
+    screen: vec2<f32>,
+    arr: array<MomentInfo>,
+}
+
+
+
+// Pack the GBuffer struct into a vec4.
+fn packMoment(gbuf: MomentInfo) -> vec4<u32> {
+    var p = vec4<u32>(0u);
+    p.x = bits_f32_as_u8(gbuf.albedo.r) | (bits_f32_as_u8(gbuf.albedo.g) << 8u) | (bits_f32_as_u8(gbuf.albedo.b) << 16u) | (bits_f32_as_u8(gbuf.emittance) << 24u);
+    let normal = (gbuf.normal + 1.0) * 0.5;
+    p.y = bits_f32_as_u8(normal.x) | (bits_f32_as_u8(normal.y) << 8u) | (bits_f32_as_u8(normal.z) << 16u);
+    p.z = pack2x16float(vec2(gbuf.depth, gbuf.variance));
+    p.w = bitcast<u32>(gbuf.irradiance);
+    return p;
+}
+
+// Unpack the GBuffer struct from a vec4.
+fn unpackMoment(p: vec4<u32>) -> MomentInfo {
+    var moment: MomentInfo;
+    moment.albedo.r = bits_u8_as_f32(p.x);
+    moment.albedo.g = bits_u8_as_f32(p.x >> 8u);
+    moment.albedo.b = bits_u8_as_f32(p.x >> 16u);
+    moment.emittance = bits_u8_as_f32(p.x >> 24u);
+    moment.normal.x = bits_u8_as_f32(p.y);
+    moment.normal.y = bits_u8_as_f32(p.y >> 8u);
+    moment.normal.z = bits_u8_as_f32(p.y >> 16u);
+    moment.normal = normalize(moment.normal * 2.0 - 1.0);
+    let tmp = unpack2x16float(p.z);
+    moment.depth = tmp.x;
+    moment.variance = tmp.y;
+    moment.irradiance = bitcast<f32>(p.w);
+    return moment;
+}
+
+@group(2)@binding(0)
+var moments: texture_storage_2d<rgba32uint, read_write>;
 
 // Fragment shader
 
@@ -346,12 +421,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let rot_dir2 = quaternion_rotate(rot2, rot_dir);
     let ray = Ray(render_data.camera, rot_dir2);
     let hit = ray_trace(ray);
+    let old_moment = textureLoad(moments, vec2<i32>(coords));
+    let unpacked_moment = unpackMoment(old_moment);
+    var new_moment: MomentInfo;
+    new_moment.albedo = mix(hit.color, unpacked_moment.albedo, 0.75);
+    if render_data.frame == 0u {
+        new_moment.albedo = hit.color;
+    }
+    textureStore(moments, vec2<i32>(coords), packMoment(new_moment));
 
     // var col = vec3<f32>(f32(hit.jumps) / 64.);
     // let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), (hit.query.normal + 1.) / 2., hit.query.present);
     // let col = rand_unit_vec();
     // let col = vec3<f32>(hit.distance / 20.);
-    let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), hit.color, hit.query.present);
+    let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), new_moment.albedo, hit.query.present);
 
     return vec4<f32>(col, 1.0);
 }
