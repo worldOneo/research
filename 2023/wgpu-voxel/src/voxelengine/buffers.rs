@@ -105,7 +105,7 @@ pub fn create_chunk_buffer(device: &Device) -> Data<world::Chunk> {
         2,
         2,
         world::Material::new(
-            world::Color::new(100, 100, 200),
+            world::Color::new(200, 200, 200),
             world::MaterialType::Emissive(50),
         ),
     );

@@ -361,7 +361,7 @@ struct FrameInfo {
 
 fn world_space_to_screen_space(camera_position: vec3<f32>, rotation: vec2<f32>, position_ws: vec3<f32>, dim: vec2<u32>) -> vec2<i32> {
     // undo tracing
-    let norm = normalize(camera_position - position_ws);
+    let norm = normalize(position_ws - camera_position);
     
     // undo up/down rotation
     let unrot2 = create_quaternion_rotation(vec3<f32>(0.0, 0., 1.0), -rotation.x);
@@ -459,7 +459,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let unpacked_moment = unpackMoment(old_moment);
     var new_moment: MomentInfo;
     new_moment.albedo += mix(hit.color, unpacked_moment.albedo, 0.9);
-    if render_data.frame == 0u {
+    new_moment.depth = hit.distance;
+    if render_data.frame == 0u || abs(hit.distance - unpacked_moment.depth) > 0.02 {
         new_moment.albedo = hit.color;
     }
     textureStore(moments, vec2<i32>(coords), buffer_switch_write_offset, packMoment(new_moment));
