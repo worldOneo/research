@@ -152,7 +152,7 @@ struct TraceResult {
     present: bool,
 }
 
-const SECONDARY_RAYS = 1;
+const SECONDARY_RAYS = 4;
 
 fn ray_trace(ray: Ray) -> TraceResult {
     var color = vec3<f32>(0.);
@@ -180,7 +180,7 @@ fn ray_trace(ray: Ray) -> TraceResult {
         if material_type(bounce.query.material) != MATERIAL_TYPE_EMISSIVE {
             continue;
         }
-        irradiance += 2.;// material_attrib(hit.query.material);
+        irradiance += 1.;// material_attrib(hit.query.material);
     }
     moment.irradiance += irradiance;
     irradiance_square += irradiance * irradiance;
@@ -487,21 +487,22 @@ fn temporal_accumulate(hit: MomentInfo, destination: vec3<f32>) -> MomentInfo {
     let unpacked_moment = unpackMoment(old_moment);
     var new_moment: MomentInfo;
     let mix = max(HISTORY_FACTOR, 1. / f32(unpacked_moment.error_free_frames));
-    new_moment.albedo = mix(unpacked_moment.albedo, hit.albedo, HISTORY_FACTOR);
-    new_moment.irradiance = mix(unpacked_moment.irradiance, hit.irradiance, HISTORY_FACTOR);
-    new_moment.variance = mix(unpacked_moment.variance, hit.variance, HISTORY_FACTOR);
+    new_moment.albedo = mix(unpacked_moment.albedo, hit.albedo, mix);
+    new_moment.irradiance = mix(unpacked_moment.irradiance, hit.irradiance, mix);
+    new_moment.variance = mix(unpacked_moment.variance, hit.variance, mix);
     new_moment.emittance = hit.emittance;
     new_moment.depth = hit.depth;
     new_moment.normal = hit.normal;
 
     let distance_to_large = abs(hit.depth - unpacked_moment.depth) > 0.02;
     let coords_invalid = reconstructed_uv.x < -1. || reconstructed_uv.y < -1. || reconstructed_uv.x > 1. || reconstructed_uv.y > 1.;
+    let bad_normals = length(abs(new_moment.normal - unpacked_moment.normal)) < eps;
 
-    if render_data.frame == 0u || distance_to_large || coords_invalid {
+    if render_data.frame == 0u || distance_to_large || coords_invalid || bad_normals {
         new_moment.albedo = hit.albedo;
         new_moment.irradiance = hit.irradiance;
         new_moment.variance = hit.variance;
-        new_moment.error_free_frames = 0u;
+        new_moment.error_free_frames = 1u;
     } else {
         new_moment.error_free_frames = min(unpacked_moment.error_free_frames + 1u, 255u);
     }
@@ -553,14 +554,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // temporal accumulation
 
     let moment = temporal_accumulate(hit.moment, hit.destination);
-    // let denoised1 = denoise(moment, vec2<i32>(coords), 1.);
-    // let denoised2 = denoise(denoised1, vec2<i32>(coords), 2.);
-    // let denoised3 = denoise(denoised2, vec2<i32>(coords), 4.);
-    // let denoised = denoise(denoised3, vec2<i32>(coords), 8.);
+    let denoised1 = denoise(moment, vec2<i32>(coords), 1.);
+    let denoised2 = denoise(denoised1, vec2<i32>(coords), 2.);
+    let denoised3 = denoise(denoised2, vec2<i32>(coords), 4.);
+    let denoised = denoise(denoised3, vec2<i32>(coords), 8.);
     // denoise(vec2<i32>(coords), 4.);
     // let denoised = denoise(vec2<i32>(coords), 8.);
     let buffer_switch_write_offset = select(1, 0, (render_data.frame & 1u) == 0u);
-    textureStore(moments, vec2<i32>(coords), buffer_switch_write_offset, packMoment(moment));
+    var store_moment = moment;
+    if denoised2.irradiance > 0.01 {
+        store_moment = denoised2;
+    }
+    textureStore(moments, vec2<i32>(coords), buffer_switch_write_offset, packMoment(store_moment));
 
     // var col = vec3<f32>(f32(hit.jumps) / 64.);
     // let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), (hit.query.normal + 1.) / 2., hit.query.present);
@@ -569,7 +574,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // let col = select(abs(vec3<f32>(vec2<f32>(vec2<u32>(reconstructed_coords.xy) - coords.xy) / render_data.screen.xy, 1.)), vec3<f32>(0.), all(vec2<u32>(reconstructed_coords) == coords));
     // let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), denoised.albedo * (denoised.irradiance + denoised.emittance), hit.present);
     // let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), hit.color, hit.query.present);
-    let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), vec3<f32>(moment.irradiance), hit.present);
+    let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), denoised.albedo * (denoised.irradiance + denoised.emittance), hit.present);
 
 
     return vec4<f32>(col, 1.0);
