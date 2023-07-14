@@ -152,7 +152,7 @@ struct TraceResult {
     present: bool,
 }
 
-const SECONDARY_RAYS = 4;
+const SECONDARY_RAYS = 2;
 
 fn ray_trace(ray: Ray) -> TraceResult {
     var color = vec3<f32>(0.);
@@ -650,7 +650,7 @@ fn compute_storage_indecies(frame: u32, stage: u32) -> StorageIndecies {
 @compute @workgroup_size(16, 16)
 fn compute_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let in_pos = compute_fragment_coords(global_id);
-    let coords = fragment_to_screen_coords(in_pos);
+    let coords = vec2<i32>(global_id.xy);
     wang_hash_init(vec2<u32>(coords), render_data.frame);
 
     let ray = camera_to_ray(render_data.camera, in_pos);
@@ -662,7 +662,7 @@ fn compute_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
 @compute @workgroup_size(16, 16)
 fn compute_denoise1(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let in_pos = compute_fragment_coords(global_id);
-    let coords = fragment_to_screen_coords(in_pos);
+    let coords = vec2<i32>(global_id.xy);
     let indecies = compute_storage_indecies(render_data.frame, 0u);
     let hit_moment = load_moment(coords, indecies.current);
     let ray = camera_to_ray(render_data.camera, in_pos);
@@ -673,16 +673,14 @@ fn compute_denoise1(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 @compute @workgroup_size(16, 16)
 fn compute_denoise2(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let in_pos = compute_fragment_coords(global_id);
-    let coords = fragment_to_screen_coords(in_pos);
+    let coords = vec2<i32>(global_id.xy);
     let indecies = compute_storage_indecies(render_data.frame, 1u);
     textureStore(moments, coords, indecies.next, packMoment(denoise(indecies.current, coords, 2.)));
 }
 
 @compute @workgroup_size(16, 16)
 fn compute_denoise3(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let in_pos = compute_fragment_coords(global_id);
-    let coords = fragment_to_screen_coords(in_pos);
+    let coords = vec2<i32>(global_id.xy);
     let indecies = compute_storage_indecies(render_data.frame, 2u);
     textureStore(moments, coords, indecies.next, packMoment(denoise(indecies.current, coords, 4.)));
 }
