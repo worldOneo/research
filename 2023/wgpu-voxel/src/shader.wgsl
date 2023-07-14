@@ -130,17 +130,17 @@ fn cast_to_hit(ray: Ray) -> HitResult {
     var ray = ray;
     let start = ray.position;
     var travelled = 0.;
-    var query = chunk_query_ray(ray);
+    var query: ChunkQueryResult;
     for (var i = 0; i < MAX_STEPS; i++) {
+        query = chunk_query_ray(ray);
+        if query.present {
+            return HitResult(i, travelled, start + ray.dir * travelled, query, material_color(query.material));
+        }
+        ray.position += query.distance.distance * ray.dir + query.distance.yank;
         travelled += query.distance.distance;
         if travelled > 100. {
             return HitResult(i, CAST_MAX, ray.position, query, material_color(query.material));
         }
-        if query.present {
-            return HitResult(i, travelled, ray.position, query, material_color(query.material));
-        }
-        ray.position += query.distance.distance * ray.dir + query.distance.yank;
-        query = chunk_query_ray(ray);
     }
     return HitResult(MAX_STEPS, CAST_MAX, ray.position, query, material_color(query.material));
 }
@@ -152,7 +152,7 @@ struct TraceResult {
     present: bool,
 }
 
-const SECONDARY_RAYS = 4;
+const SECONDARY_RAYS = 2;
 
 fn ray_trace(ray: Ray) -> TraceResult {
     var color = vec3<f32>(0.);
@@ -180,7 +180,7 @@ fn ray_trace(ray: Ray) -> TraceResult {
         if material_type(bounce.query.material) != MATERIAL_TYPE_EMISSIVE {
             continue;
         }
-        irradiance += 1.;// material_attrib(hit.query.material);
+        irradiance += 0.7;// material_attrib(hit.query.material);
     }
     moment.irradiance += irradiance;
     irradiance_square += irradiance * irradiance;
@@ -380,13 +380,26 @@ struct FrameInfo {
     arr: array<MomentInfo>,
 }
 
+fn camera_to_ray(camera: Camera, in_pos: vec2<f32>) -> Ray {
+    let aspect = render_data.screen / render_data.screen.x;
+    let streched_xy_rot = in_pos * aspect;
+
+    let dir = normalize(vec3<f32>(VERY_ODD_FOV_NUMBER, streched_xy_rot.x, streched_xy_rot.y));
+    let rot = create_quaternion_rotation(vec3<f32>(0.0, 1.0, 0.0), camera.rotation.y);
+    let rot_dir = quaternion_rotate(rot, dir);
+    let rot2 = create_quaternion_rotation(vec3<f32>(0.0, 0., 1.0), camera.rotation.x);
+    let rot_dir2 = quaternion_rotate(rot2, rot_dir);
+    let ray = Ray(camera.position, rot_dir2);
+    return ray;
+}
+
 fn world_space_to_screen_space(camera_position: vec3<f32>, rotation: vec2<f32>, position_ws: vec3<f32>) -> vec2<f32> {
     // undo tracing
-    let norm = position_ws - camera_position;
+    let ray_direction = normalize(position_ws - camera_position);
     
     // undo up/down rotation
     let unrot2 = create_quaternion_rotation(vec3<f32>(0.0, 0., 1.0), -rotation.x);
-    let rot_dir2 = quaternion_rotate(unrot2, norm);
+    let rot_dir2 = quaternion_rotate(unrot2, ray_direction);
     
     // undo left/right rotation
     let unrot = create_quaternion_rotation(vec3<f32>(0.0, 1.0, 0.0), -rotation.y);
@@ -410,12 +423,12 @@ fn packMoment(gbuf: MomentInfo) -> vec4<u32> {
     p.x = bits_f32_as_u8(gbuf.albedo.r) | (bits_f32_as_u8(gbuf.albedo.g) << 8u) | (bits_f32_as_u8(gbuf.albedo.b) << 16u) | (bits_f32_as_u8(gbuf.emittance) << 24u);
     let normal = (gbuf.normal + 1.0) * 0.5;
     p.y = bits_f32_as_u8(normal.x) | (bits_f32_as_u8(normal.y) << 8u) | (bits_f32_as_u8(normal.z) << 16u) | ((gbuf.error_free_frames & 0xFFu) << 24u);
-    p.z = pack2x16float(vec2(gbuf.depth, gbuf.variance));
-    p.w = bitcast<u32>(gbuf.irradiance);
+    p.z = pack2x16float(vec2(gbuf.irradiance, gbuf.variance));
+    p.w = bitcast<u32>(gbuf.depth);
     return p;
 }
 
-fn unpackMoment(p: vec4<u32>) -> MomentInfo {
+fn unpack_moment(p: vec4<u32>) -> MomentInfo {
     var moment: MomentInfo;
     moment.albedo.r = bits_u8_as_f32(p.x);
     moment.albedo.g = bits_u8_as_f32(p.x >> 8u);
@@ -427,9 +440,9 @@ fn unpackMoment(p: vec4<u32>) -> MomentInfo {
     moment.normal = normalize(moment.normal * 2.0 - 1.0);
     moment.error_free_frames = p.y >> 24u;
     let tmp = unpack2x16float(p.z);
-    moment.depth = tmp.x;
+    moment.irradiance = tmp.x;
     moment.variance = tmp.y;
-    moment.irradiance = bitcast<f32>(p.w);
+    moment.depth = bitcast<f32>(p.w);
     return moment;
 }
 
@@ -448,20 +461,21 @@ fn luminance_weight(l0: f32, l1: f32, variance: f32) -> f32 {
     return exp((-abs(l0 - l1)) / (4. * variance + eps));
 }
 
-fn denoise(moment: MomentInfo, coords: vec2<i32>, step: f32) -> MomentInfo {
-    var moment = moment;
+fn denoise(cMoment: MomentInfo, coords: vec2<i32>, step: f32) -> MomentInfo {
+    //        16 8 16
+    // 1 over 8  4 8
+    //        16 8 16
+    var cMoment = cMoment;
     var denoise_kernel: array<f32, 9> = array<f32,9>(0.0625, 0.125, 0.0625, 0.125, 0.25, 0.125, 0.0625, 0.125, 0.0625);
     let buffer_switch_read_offset = select(0, 1, (render_data.frame & 1u) == 0u);
+    var moment = unpack_moment(textureLoad(moments, coords, buffer_switch_read_offset));
     let grad = vec2<f32>(dpdxFine(moment.depth), dpdyFine(moment.depth));
     var irradiance = 0.;
     var wsum = 0.;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
             let otherOffset = vec2<f32>(f32(x), f32(y)) * step;
-            var otherMoment = unpackMoment(textureLoad(moments, coords + vec2<i32>(otherOffset), buffer_switch_read_offset));
-            if all(otherOffset == vec2<f32>(0., 0.)) {
-                otherMoment = moment;
-            }
+            var otherMoment = unpack_moment(textureLoad(moments, coords + vec2<i32>(otherOffset), buffer_switch_read_offset));
             let n_weight = normal_weight(moment.normal, otherMoment.normal);
             let d_weight = depth_weight(moment.depth, otherMoment.depth, grad, otherOffset);
             let l_weight = luminance_weight(moment.irradiance, otherMoment.irradiance, moment.variance);
@@ -471,42 +485,78 @@ fn denoise(moment: MomentInfo, coords: vec2<i32>, step: f32) -> MomentInfo {
             wsum += filter_weight;
         }
     }
-    moment.irradiance = irradiance / wsum;
-    return moment;
+    cMoment.irradiance = irradiance / wsum;
+    return cMoment;
 } 
 
 const HISTORY_FACTOR: f32 = 0.1;
 
-fn temporal_accumulate(hit: MomentInfo, destination: vec3<f32>) -> MomentInfo {
-    let reconstructed_uv = world_space_to_screen_space(render_data.old_camera.position, render_data.old_camera.rotation, destination);
-    let reconstructed_coords = vec2<i32>(fragment_to_screen_coords(reconstructed_uv));
-
+fn select_closest_moment(uv: ptr<function, vec2<f32>>, destination: vec3<f32>) -> MomentInfo {
+    var min_distance = CAST_MAX;
+    var moment: MomentInfo;
+    var min_uv: vec2<f32>;
     let buffer_switch_read_offset = select(0, 1, (render_data.frame & 1u) == 0u);
+    for (var x = -1; x <= 1; x++) {
+        for (var y = -1; y <= 1; y++) {
+            let xy_uv = *uv + vec2<f32>(f32(x), f32(y)) / (render_data.screen * 0.5);
+            let coords = fragment_to_screen_coords(xy_uv);
+            if coords.x < 0 || coords.y < 0 || coords.x > i32(render_data.screen.x) || coords.y > i32(render_data.screen.y) {
+                continue;
+            }
+            let buff = textureLoad(moments, coords, buffer_switch_read_offset);
+            let ray = camera_to_ray(render_data.old_camera, xy_uv);
+            let unpacked = unpack_moment(buff);
+            let dist = distance(destination, ray.position + ray.dir * unpacked.depth);
+            if dist < min_distance {
+                moment = unpacked;
+                min_distance = dist;
+                min_uv = xy_uv;
+            }
+        }
+    }
+    *uv = min_uv;
+    return moment;
+}
 
-    let old_moment = textureLoad(moments, reconstructed_coords, buffer_switch_read_offset);
-    let unpacked_moment = unpackMoment(old_moment);
-    var new_moment: MomentInfo;
-    let mix = max(HISTORY_FACTOR, 1. / f32(unpacked_moment.error_free_frames));
-    new_moment.albedo = mix(unpacked_moment.albedo, hit.albedo, mix);
-    new_moment.irradiance = mix(unpacked_moment.irradiance, hit.irradiance, mix);
-    new_moment.variance = mix(unpacked_moment.variance, hit.variance, mix);
-    new_moment.emittance = hit.emittance;
-    new_moment.depth = hit.depth;
-    new_moment.normal = hit.normal;
+fn temporal_accumulate(hit: MomentInfo, in_pos: vec2<f32>, destination: vec3<f32>) -> MomentInfo {
+    let org_hit = hit;
+    var hit = hit;
+    let reconstructed_uv = world_space_to_screen_space(render_data.old_camera.position, render_data.old_camera.rotation, destination);
+    var closest_uv = reconstructed_uv;
+    let unpacked_moment = select_closest_moment(&closest_uv, destination);
+    let reprojected_coords = fragment_to_screen_coords(closest_uv);
+    var denoised_hit = denoise(org_hit, vec2<i32>(reprojected_coords), 1.);
 
     let distance_to_large = abs(hit.depth - unpacked_moment.depth) > 0.02;
     let coords_invalid = reconstructed_uv.x < -1. || reconstructed_uv.y < -1. || reconstructed_uv.x > 1. || reconstructed_uv.y > 1.;
-    let bad_normals = length(abs(new_moment.normal - unpacked_moment.normal)) < eps;
 
-    if render_data.frame == 0u || distance_to_large || coords_invalid || bad_normals {
-        new_moment.albedo = hit.albedo;
-        new_moment.irradiance = hit.irradiance;
-        new_moment.variance = hit.variance;
-        new_moment.error_free_frames = 1u;
+    if render_data.frame != 0u && !distance_to_large && !coords_invalid {
+        let mix = max(HISTORY_FACTOR, 1. / f32(unpacked_moment.error_free_frames));
+        denoised_hit.irradiance = mix(unpacked_moment.irradiance, hit.irradiance, mix);
+        denoised_hit.variance = mix(unpacked_moment.variance, hit.variance, mix);
+        denoised_hit.error_free_frames = min(unpacked_moment.error_free_frames + 1u, 255u);
     } else {
-        new_moment.error_free_frames = min(unpacked_moment.error_free_frames + 1u, 255u);
+        denoised_hit.error_free_frames = 1u;
     }
-    return new_moment;
+
+
+    let denoised2 = denoise(denoised_hit, vec2<i32>(reprojected_coords), 2.);
+    let denoised3 = denoise(denoised2, vec2<i32>(reprojected_coords), 4.);
+    let denoised = denoise(denoised3, vec2<i32>(reprojected_coords), 8.);
+
+    let buffer_switch_write_offset = select(1, 0, (render_data.frame & 1u) == 0u);
+    var store_moment = denoised_hit;
+    textureStore(moments, vec2<i32>(fragment_to_screen_coords(in_pos)), buffer_switch_write_offset, packMoment(store_moment));
+    if in_pos.x < -0.5 {
+        return org_hit;
+    }
+    if in_pos.x < 0. {
+        return denoised_hit;
+    }
+    if in_pos.x < 0.5 {
+        return denoised2;
+    }
+    return denoised;
 }
 
 @group(2)@binding(0)
@@ -529,8 +579,8 @@ struct RenderData {
 @group(0)@binding(0)
 var<uniform> render_data: RenderData;
 
-fn fragment_to_screen_coords(uv: vec2<f32>) -> vec2<u32> {
-    return  vec2<u32>(ceil((uv * 0.5 + 0.5) * (render_data.screen)));
+fn fragment_to_screen_coords(uv: vec2<f32>) -> vec2<i32> {
+    return  vec2<i32>(floor((uv * 0.5 + 0.5) * render_data.screen));
 }
 
 const VERY_ODD_FOV_NUMBER: f32 = 2.0;
@@ -538,43 +588,27 @@ const VERY_ODD_FOV_NUMBER: f32 = 2.0;
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let coords = fragment_to_screen_coords(in.position.xy);
-    wang_hash_init(coords, render_data.frame);
+    wang_hash_init(vec2<u32>(coords), render_data.frame);
 
-    let aspect = render_data.screen / render_data.screen.x;
-    let streched_xy_rot = in.position.xy * aspect;
-
-    let dir = normalize(vec3<f32>(VERY_ODD_FOV_NUMBER, streched_xy_rot.x, streched_xy_rot.y));
-    let rot = create_quaternion_rotation(vec3<f32>(0.0, 1.0, 0.0), render_data.camera.rotation.y);
-    let rot_dir = quaternion_rotate(rot, dir);
-    let rot2 = create_quaternion_rotation(vec3<f32>(0.0, 0., 1.0), render_data.camera.rotation.x);
-    let rot_dir2 = quaternion_rotate(rot2, rot_dir);
-    let ray = Ray(render_data.camera.position, rot_dir2);
+    let ray = camera_to_ray(render_data.camera, in.position);
     let hit = ray_trace(ray);
 
     // temporal accumulation
 
-    let moment = temporal_accumulate(hit.moment, hit.destination);
-    let denoised1 = denoise(moment, vec2<i32>(coords), 1.);
-    let denoised2 = denoise(denoised1, vec2<i32>(coords), 2.);
-    let denoised3 = denoise(denoised2, vec2<i32>(coords), 4.);
-    let denoised = denoise(denoised3, vec2<i32>(coords), 8.);
+    let hit_moment = hit.moment;
+    let moment = temporal_accumulate(hit_moment, in.position.xy, hit.destination);
+
     // denoise(vec2<i32>(coords), 4.);
     // let denoised = denoise(vec2<i32>(coords), 8.);
-    let buffer_switch_write_offset = select(1, 0, (render_data.frame & 1u) == 0u);
-    var store_moment = moment;
-    if denoised2.irradiance > 0.01 {
-        store_moment = denoised2;
-    }
-    textureStore(moments, vec2<i32>(coords), buffer_switch_write_offset, packMoment(store_moment));
 
     // var col = vec3<f32>(f32(hit.jumps) / 64.);
     // let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), (hit.query.normal + 1.) / 2., hit.query.present);
     // let col = rand_unit_vec();
-    // let col = vec3<f32>(hit.distance / 20.);
-    // let col = select(abs(vec3<f32>(vec2<f32>(vec2<u32>(reconstructed_coords.xy) - coords.xy) / render_data.screen.xy, 1.)), vec3<f32>(0.), all(vec2<u32>(reconstructed_coords) == coords));
-    // let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), denoised.albedo * (denoised.irradiance + denoised.emittance), hit.present);
+    // let col = vec3<f32>(hit.moment.depth / 20.);
+
+    // let col = select(vec3<f32>((ray.dir.yz + 1.) / 2., 0.), denoised.albedo * (denoised.irradiance + denoised.emittance), hit.present);
     // let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), hit.color, hit.query.present);
-    let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), denoised.albedo * (denoised.irradiance + denoised.emittance), hit.present);
+    let col = select(vec3<f32>((ray.dir.yz + 1.) / 2., 0.), moment.albedo * (moment.irradiance + hit_moment.emittance), hit.present);
 
 
     return vec4<f32>(col, 1.0);

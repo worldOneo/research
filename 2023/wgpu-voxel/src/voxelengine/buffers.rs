@@ -101,6 +101,15 @@ pub fn create_chunk_buffer(device: &Device) -> Data<world::Chunk> {
         ),
     );
     chunk.set_material(
+        4,
+        3,
+        1,
+        world::Material::new(
+            world::Color::new(200, 100, 100),
+            world::MaterialType::Rough(255),
+        ),
+    );
+    chunk.set_material(
         3,
         2,
         2,
