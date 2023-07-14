@@ -152,7 +152,7 @@ struct TraceResult {
     present: bool,
 }
 
-const SECONDARY_RAYS = 2;
+const SECONDARY_RAYS = 4;
 
 fn ray_trace(ray: Ray) -> TraceResult {
     var color = vec3<f32>(0.);
@@ -507,9 +507,8 @@ fn select_closest_moment(uv: ptr<function, vec2<f32>>, index: i32, destination: 
             if coords.x < 0 || coords.y < 0 || coords.x > i32(render_data.screen.x) || coords.y > i32(render_data.screen.y) {
                 continue;
             }
-            let buff = textureLoad(moments, coords, index);
+            let unpacked = load_moment(coords, index);
             let ray = camera_to_ray(render_data.old_camera, xy_uv);
-            let unpacked = unpack_moment(buff);
             let dist = distance(destination, ray.position + ray.dir * unpacked.depth);
             if dist < min_distance {
                 moment = unpacked;
@@ -528,13 +527,13 @@ fn temporal_accumulate(hit: MomentInfo, indecies: StorageIndecies, in_pos: vec2<
     var closest_uv = reconstructed_uv;
     let prev_moment = select_closest_moment(&closest_uv, indecies.history, destination);
     let reprojected_coords = fragment_to_screen_coords(closest_uv);
-    let current_coords = fragment_to_screen_coords(in_pos);
     var denoised_hit = denoise(indecies.history, vec2<i32>(reprojected_coords), 1.);
 
     let distance_to_large = abs(hit.depth - prev_moment.depth) > 0.02;
     let coords_invalid = reconstructed_uv.x < -1. || reconstructed_uv.y < -1. || reconstructed_uv.x > 1. || reconstructed_uv.y > 1.;
+    let equal_normals = distance(hit.normal, prev_moment.normal) < eps;
 
-    if render_data.frame != 0u && !distance_to_large && !coords_invalid {
+    if render_data.frame != 0u && !distance_to_large && !coords_invalid && equal_normals {
         let mix = max(HISTORY_FACTOR, 1. / f32(prev_moment.error_free_frames));
         org_hit.irradiance = mix(prev_moment.irradiance, hit.irradiance, mix);
         org_hit.variance = mix(prev_moment.variance, hit.variance, mix);

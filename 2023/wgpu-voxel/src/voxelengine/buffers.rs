@@ -91,21 +91,35 @@ pub fn create_chunk_buffer(device: &Device) -> Data<world::Chunk> {
             world::MaterialType::Rough(255),
         ),
     );
-    chunk.set_material(
-        3,
-        3,
-        1,
-        world::Material::new(
-            world::Color::new(100, 100, 200),
-            world::MaterialType::Rough(255),
-        ),
-    );
+    for x in (0..8).step_by(2) {
+        for y in 0..8 {
+            let xoffset = if y % 2 == 0 { 0 } else { 1 };
+            chunk.set_material(
+                x + xoffset,
+                y,
+                1,
+                world::Material::new(
+                    world::Color::new(100, 100, 200),
+                    world::MaterialType::Rough(255),
+                ),
+            );
+        }
+    }
     chunk.set_material(
         4,
         3,
         1,
         world::Material::new(
             world::Color::new(200, 100, 100),
+            world::MaterialType::Rough(255),
+        ),
+    );
+    chunk.set_material(
+        2,
+        3,
+        1,
+        world::Material::new(
+            world::Color::new(100, 200, 100),
             world::MaterialType::Rough(255),
         ),
     );
