@@ -152,7 +152,7 @@ struct TraceResult {
     present: bool,
 }
 
-const SECONDARY_RAYS = 2;
+const SECONDARY_RAYS = 4;
 
 fn ray_trace(ray: Ray) -> TraceResult {
     var color = vec3<f32>(0.);
@@ -180,7 +180,7 @@ fn ray_trace(ray: Ray) -> TraceResult {
         if material_type(bounce.query.material) != MATERIAL_TYPE_EMISSIVE {
             continue;
         }
-        irradiance += 0.7;// material_attrib(hit.query.material);
+        irradiance += 1.;// material_attrib(hit.query.material);
     }
     moment.irradiance += irradiance;
     irradiance_square += irradiance * irradiance;
@@ -446,6 +446,10 @@ fn unpack_moment(p: vec4<u32>) -> MomentInfo {
     return moment;
 }
 
+fn load_moment(coords: vec2<i32>, index: i32) -> MomentInfo {
+    return unpack_moment(textureLoad(moments, coords, index));
+}
+
 
 // https://www.semanticscholar.org/paper/Progressive-Spatiotemporal-Variance-Guided-Dundr/a81a4eed7f303f7e7f3ca1914ccab66351ce662b?p2df
 // 4.4
@@ -461,41 +465,41 @@ fn luminance_weight(l0: f32, l1: f32, variance: f32) -> f32 {
     return exp((-abs(l0 - l1)) / (4. * variance + eps));
 }
 
-fn denoise(cMoment: MomentInfo, coords: vec2<i32>, step: f32) -> MomentInfo {
+fn denoise(index: i32, coords: vec2<i32>, step: f32) -> MomentInfo {
     //        16 8 16
     // 1 over 8  4 8
     //        16 8 16
-    var cMoment = cMoment;
     var denoise_kernel: array<f32, 9> = array<f32,9>(0.0625, 0.125, 0.0625, 0.125, 0.25, 0.125, 0.0625, 0.125, 0.0625);
-    let buffer_switch_read_offset = select(0, 1, (render_data.frame & 1u) == 0u);
-    var moment = unpack_moment(textureLoad(moments, coords, buffer_switch_read_offset));
-    let grad = vec2<f32>(dpdxFine(moment.depth), dpdyFine(moment.depth));
+    var moment = load_moment(coords, index);
+    var momentx = load_moment(coords + vec2<i32>(1, 0), index);
+    var momenty = load_moment(coords + vec2<i32>(0, 1), index);
+
+    let grad = vec2<f32>(momentx.depth - moment.depth, momenty.depth - moment.depth);
     var irradiance = 0.;
     var wsum = 0.;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
             let otherOffset = vec2<f32>(f32(x), f32(y)) * step;
-            var otherMoment = unpack_moment(textureLoad(moments, coords + vec2<i32>(otherOffset), buffer_switch_read_offset));
+            var otherMoment = load_moment(coords + vec2<i32>(otherOffset), index);
             let n_weight = normal_weight(moment.normal, otherMoment.normal);
             let d_weight = depth_weight(moment.depth, otherMoment.depth, grad, otherOffset);
             let l_weight = luminance_weight(moment.irradiance, otherMoment.irradiance, moment.variance);
-            let weight = clamp(d_weight * l_weight * n_weight, 0., 1.);
+            let weight = clamp(d_weight * n_weight, 0., 1.);
             let filter_weight = weight * denoise_kernel[x + 1 + (y + 1) * 3];
             irradiance += otherMoment.irradiance * filter_weight;
             wsum += filter_weight;
         }
     }
-    cMoment.irradiance = irradiance / wsum;
-    return cMoment;
+    moment.irradiance = irradiance / wsum;
+    return moment;
 } 
 
-const HISTORY_FACTOR: f32 = 0.1;
+const HISTORY_FACTOR: f32 = 0.05;
 
-fn select_closest_moment(uv: ptr<function, vec2<f32>>, destination: vec3<f32>) -> MomentInfo {
+fn select_closest_moment(uv: ptr<function, vec2<f32>>, index: i32, destination: vec3<f32>) -> MomentInfo {
     var min_distance = CAST_MAX;
     var moment: MomentInfo;
     var min_uv: vec2<f32>;
-    let buffer_switch_read_offset = select(0, 1, (render_data.frame & 1u) == 0u);
     for (var x = -1; x <= 1; x++) {
         for (var y = -1; y <= 1; y++) {
             let xy_uv = *uv + vec2<f32>(f32(x), f32(y)) / (render_data.screen * 0.5);
@@ -503,7 +507,7 @@ fn select_closest_moment(uv: ptr<function, vec2<f32>>, destination: vec3<f32>) -
             if coords.x < 0 || coords.y < 0 || coords.x > i32(render_data.screen.x) || coords.y > i32(render_data.screen.y) {
                 continue;
             }
-            let buff = textureLoad(moments, coords, buffer_switch_read_offset);
+            let buff = textureLoad(moments, coords, index);
             let ray = camera_to_ray(render_data.old_camera, xy_uv);
             let unpacked = unpack_moment(buff);
             let dist = distance(destination, ray.position + ray.dir * unpacked.depth);
@@ -518,45 +522,28 @@ fn select_closest_moment(uv: ptr<function, vec2<f32>>, destination: vec3<f32>) -
     return moment;
 }
 
-fn temporal_accumulate(hit: MomentInfo, in_pos: vec2<f32>, destination: vec3<f32>) -> MomentInfo {
-    let org_hit = hit;
-    var hit = hit;
+fn temporal_accumulate(hit: MomentInfo, indecies: StorageIndecies, in_pos: vec2<f32>, destination: vec3<f32>) -> MomentInfo {
+    var org_hit = hit;
     let reconstructed_uv = world_space_to_screen_space(render_data.old_camera.position, render_data.old_camera.rotation, destination);
     var closest_uv = reconstructed_uv;
-    let unpacked_moment = select_closest_moment(&closest_uv, destination);
+    let prev_moment = select_closest_moment(&closest_uv, indecies.history, destination);
     let reprojected_coords = fragment_to_screen_coords(closest_uv);
-    var denoised_hit = denoise(org_hit, vec2<i32>(reprojected_coords), 1.);
+    let current_coords = fragment_to_screen_coords(in_pos);
+    var denoised_hit = denoise(indecies.history, vec2<i32>(reprojected_coords), 1.);
 
-    let distance_to_large = abs(hit.depth - unpacked_moment.depth) > 0.02;
+    let distance_to_large = abs(hit.depth - prev_moment.depth) > 0.02;
     let coords_invalid = reconstructed_uv.x < -1. || reconstructed_uv.y < -1. || reconstructed_uv.x > 1. || reconstructed_uv.y > 1.;
 
     if render_data.frame != 0u && !distance_to_large && !coords_invalid {
-        let mix = max(HISTORY_FACTOR, 1. / f32(unpacked_moment.error_free_frames));
-        denoised_hit.irradiance = mix(unpacked_moment.irradiance, hit.irradiance, mix);
-        denoised_hit.variance = mix(unpacked_moment.variance, hit.variance, mix);
-        denoised_hit.error_free_frames = min(unpacked_moment.error_free_frames + 1u, 255u);
+        let mix = max(HISTORY_FACTOR, 1. / f32(prev_moment.error_free_frames));
+        org_hit.irradiance = mix(prev_moment.irradiance, hit.irradiance, mix);
+        org_hit.variance = mix(prev_moment.variance, hit.variance, mix);
+        org_hit.error_free_frames = min(prev_moment.error_free_frames + 1u, 255u);
     } else {
-        denoised_hit.error_free_frames = 1u;
+        org_hit.error_free_frames = 1u;
     }
 
-
-    let denoised2 = denoise(denoised_hit, vec2<i32>(reprojected_coords), 2.);
-    let denoised3 = denoise(denoised2, vec2<i32>(reprojected_coords), 4.);
-    let denoised = denoise(denoised3, vec2<i32>(reprojected_coords), 8.);
-
-    let buffer_switch_write_offset = select(1, 0, (render_data.frame & 1u) == 0u);
-    var store_moment = denoised_hit;
-    textureStore(moments, vec2<i32>(fragment_to_screen_coords(in_pos)), buffer_switch_write_offset, packMoment(store_moment));
-    if in_pos.x < -0.5 {
-        return org_hit;
-    }
-    if in_pos.x < 0. {
-        return denoised_hit;
-    }
-    if in_pos.x < 0.5 {
-        return denoised2;
-    }
-    return denoised;
+    return org_hit;
 }
 
 @group(2)@binding(0)
@@ -587,29 +574,115 @@ const VERY_ODD_FOV_NUMBER: f32 = 2.0;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let coords = fragment_to_screen_coords(in.position.xy);
+    let coords = fragment_to_screen_coords(in.position);
+    let indecies = compute_storage_indecies(render_data.frame, 3u);
+    let moment = denoise(indecies.current, coords, 8.);
+    // let col = vec3<f32>(moment.depth / 20.);
+    // let col = vec3<f32>(moment.irradiance);
+
+    let col = moment.albedo * (moment.irradiance + moment.emittance);
+
+    return vec4<f32>(select(vec3<f32>(in.position, 0.), col, moment.depth < 100.), 1.0);
+}
+
+
+fn compute_fragment_coords(id: vec3<u32>) -> vec2<f32> {
+    return ((vec2<f32>(vec2<i32>(id.xy) - vec2<i32>(render_data.screen * 0.5)) / (render_data.screen * 0.5)));
+}
+
+struct StorageIndecies {
+    history: i32,
+    current: i32,
+    next: i32,
+}
+
+fn compute_storage_indecies(frame: u32, stage: u32) -> StorageIndecies {
+    // 0 - Trace      => H | nH | T
+    // 0 - Denoise 1. => H | nH | T
+    // 1 - Denoise 2. => N | C/H| T
+    // 2 - Denoise 4. => C | H  | N
+    // 3 - Denoise 8. => N | H  | C
+
+
+
+
+    let history = frame % 3u;
+    if stage == 0u {
+        // History | new history | Traced
+        // Trace: Direct hits into Traced
+        // Denoise 1.: Denoise traced + history into new history
+        return StorageIndecies(
+            i32((frame + 0u) % 3u),
+            i32((frame + 2u) % 3u),
+            i32((frame + 1u) % 3u),
+        );
+    }
+
+    if stage == 1u {
+        // next | current&history | no value
+        // Denoise 2.: denoise current value into next
+        return StorageIndecies(
+            i32((frame + 1u) % 3u),
+            i32((frame + 1u) % 3u),
+            i32((frame + 0u) % 3u),
+        );
+    }
+
+    if stage == 2u {
+        // current | history | next
+        // Denoise 3.: denoise current into next
+        return StorageIndecies(
+            i32((frame + 1u) % 3u),
+            i32((frame + 0u) % 3u),
+            i32((frame + 2u) % 3u),
+        );
+    }
+
+    // unused | history | current
+    // Denoise 4.: denoise current into the frame
+    return StorageIndecies(
+        i32((frame + 1u) % 3u),
+        i32((frame + 2u) % 3u),
+        i32((frame + 0u) % 3u),
+    );
+}
+
+@compute @workgroup_size(16, 16)
+fn compute_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let in_pos = compute_fragment_coords(global_id);
+    let coords = fragment_to_screen_coords(in_pos);
     wang_hash_init(vec2<u32>(coords), render_data.frame);
 
-    let ray = camera_to_ray(render_data.camera, in.position);
+    let ray = camera_to_ray(render_data.camera, in_pos);
     let hit = ray_trace(ray);
+    let indecies = compute_storage_indecies(render_data.frame, 0u);
+    textureStore(moments, coords, indecies.current, packMoment(hit.moment));
+}
 
-    // temporal accumulation
+@compute @workgroup_size(16, 16)
+fn compute_denoise1(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let in_pos = compute_fragment_coords(global_id);
+    let coords = fragment_to_screen_coords(in_pos);
+    let indecies = compute_storage_indecies(render_data.frame, 0u);
+    let hit_moment = load_moment(coords, indecies.current);
+    let ray = camera_to_ray(render_data.camera, in_pos);
+    let dest = ray.position + ray.dir * hit_moment.depth;
+    let moment = temporal_accumulate(hit_moment, indecies, in_pos, dest);
+    textureStore(moments, coords, indecies.next, packMoment(moment));
+}
 
-    let hit_moment = hit.moment;
-    let moment = temporal_accumulate(hit_moment, in.position.xy, hit.destination);
+@compute @workgroup_size(16, 16)
+fn compute_denoise2(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let in_pos = compute_fragment_coords(global_id);
+    let coords = fragment_to_screen_coords(in_pos);
+    let indecies = compute_storage_indecies(render_data.frame, 1u);
+    textureStore(moments, coords, indecies.next, packMoment(denoise(indecies.current, coords, 2.)));
+}
 
-    // denoise(vec2<i32>(coords), 4.);
-    // let denoised = denoise(vec2<i32>(coords), 8.);
-
-    // var col = vec3<f32>(f32(hit.jumps) / 64.);
-    // let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), (hit.query.normal + 1.) / 2., hit.query.present);
-    // let col = rand_unit_vec();
-    // let col = vec3<f32>(hit.moment.depth / 20.);
-
-    // let col = select(vec3<f32>((ray.dir.yz + 1.) / 2., 0.), denoised.albedo * (denoised.irradiance + denoised.emittance), hit.present);
-    // let col = select(vec3<f32>((rot_dir2.xy + 1.) / 2., 0.), hit.color, hit.query.present);
-    let col = select(vec3<f32>((ray.dir.yz + 1.) / 2., 0.), moment.albedo * (moment.irradiance + hit_moment.emittance), hit.present);
-
-
-    return vec4<f32>(col, 1.0);
+@compute @workgroup_size(16, 16)
+fn compute_denoise3(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let in_pos = compute_fragment_coords(global_id);
+    let coords = fragment_to_screen_coords(in_pos);
+    let indecies = compute_storage_indecies(render_data.frame, 2u);
+    textureStore(moments, coords, indecies.next, packMoment(denoise(indecies.current, coords, 4.)));
 }

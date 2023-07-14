@@ -21,6 +21,7 @@ struct State {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     window: Window,
+    denoisers: [wgpu::ComputePipeline; 4],
     render_pipeline: wgpu::RenderPipeline,
 
     render_input: buffers::Data<buffers::RenderInputData>,
@@ -112,6 +113,31 @@ impl State {
                 push_constant_ranges: &[],
             });
 
+        let denoise1 = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("trace pipeline"),
+            layout: Some(&render_pipeline_layout),
+            module: &shader,
+            entry_point: "compute_trace",
+        });
+        let denoise2 = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("denoise1 Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            module: &shader,
+            entry_point: "compute_denoise1",
+        });
+        let denoise3 = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("denoise2 Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            module: &shader,
+            entry_point: "compute_denoise2",
+        });
+        let denoise4 = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("denoise3 Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            module: &shader,
+            entry_point: "compute_denoise3",
+        });
+
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
@@ -160,6 +186,7 @@ impl State {
             config,
             size,
             render_pipeline,
+            denoisers: [denoise1, denoise2, denoise3, denoise4],
 
             render_input,
             chunk,
@@ -196,7 +223,18 @@ impl State {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
-
+        {
+            for v in self.denoisers.iter() {
+                let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Trace and Denoise"),
+                });
+                compute_pass.set_pipeline(v);
+                compute_pass.set_bind_group(0, &self.render_input.bind_group, &[]);
+                compute_pass.set_bind_group(1, &self.chunk.bind_group, &[]);
+                compute_pass.set_bind_group(2, &self.svgf.bind_group, &[]);
+                compute_pass.dispatch_workgroups(self.render_input.data.dim[0] as u32 / 16 + 1, self.render_input.data.dim[1] as u32 / 16 + 1, 1);
+            }
+        }
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),

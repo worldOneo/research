@@ -157,10 +157,7 @@ pub struct Chunk {
 
 impl Chunk {
     pub fn new(x: i32, y: i32, z: i32) -> Self {
-        let mut chunk: Chunk = unsafe { std::mem::MaybeUninit::uninit().assume_init() }; // Rust can't zero init big slices.
-        chunk.data = chunk
-            .data
-            .map(|_| Material::new(Color::new(0, 0, 0), MaterialType::Absent));
+        let mut chunk: Chunk = unsafe { std::mem::MaybeUninit::zeroed().assume_init() }; // Rust can't zero init big slices.
         chunk.location = [x, y, z];
         chunk
     }

@@ -43,7 +43,7 @@ pub fn create_render_input_buffer(device: &Device) -> Data<RenderInputData> {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -129,7 +129,7 @@ pub fn create_chunk_buffer(device: &Device) -> Data<world::Chunk> {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
@@ -169,7 +169,7 @@ pub fn create_svgf_buffer(device: &Device) -> TextureThing {
         size: wgpu::Extent3d {
             width: 1920,
             height: 1080,
-            depth_or_array_layers: 2,
+            depth_or_array_layers: 3,
         },
         mip_level_count: 1,
         sample_count: 1,
@@ -183,13 +183,13 @@ pub fn create_svgf_buffer(device: &Device) -> TextureThing {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::StorageTexture {
                     access: wgpu::StorageTextureAccess::ReadWrite,
                     format: wgpu::TextureFormat::Rgba32Uint,
                     view_dimension: wgpu::TextureViewDimension::D2Array,
                 },
-                count: Some(2.try_into().unwrap()),
+                count: Some(3.try_into().unwrap()),
             }],
             label: Some("svgf_layout"),
         });
