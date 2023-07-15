@@ -535,8 +535,8 @@ fn temporal_accumulate(hit: MomentInfo, indecies: StorageIndecies, in_pos: vec2<
 
     if render_data.frame != 0u && !distance_to_large && !coords_invalid && equal_normals {
         let mix = max(HISTORY_FACTOR, 1. / f32(prev_moment.error_free_frames));
-        org_hit.irradiance = mix(prev_moment.irradiance, hit.irradiance, mix);
-        org_hit.variance = mix(prev_moment.variance, hit.variance, mix);
+        org_hit.irradiance = mix(denoised_hit.irradiance, hit.irradiance, mix);
+        org_hit.variance = mix(denoised_hit.variance, hit.variance, mix);
         org_hit.error_free_frames = min(prev_moment.error_free_frames + 1u, 255u);
     } else {
         org_hit.error_free_frames = 1u;
