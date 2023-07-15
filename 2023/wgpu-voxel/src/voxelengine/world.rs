@@ -36,7 +36,7 @@ impl MaterialType {
     }
 
     fn weight_from_float(f: f32) -> u8 {
-        ((f + 1.).log2() * 4.) as u8
+        ((f + 1.).log2() * 16.) as u8
     }
 }
 

@@ -131,6 +131,7 @@ fn cast_to_hit(ray: Ray) -> HitResult {
     let start = ray.position;
     var travelled = 0.;
     var query: ChunkQueryResult;
+    let ambient_material = Material((255u << 24u) | (255u << 16u) | (255u << 8u) | (MATERIAL_TYPE_EMISSIVE << 6u) | (5u));
     for (var i = 0; i < MAX_STEPS; i++) {
         query = chunk_query_ray(ray);
         if query.present {
@@ -139,6 +140,7 @@ fn cast_to_hit(ray: Ray) -> HitResult {
         ray.position += query.distance.distance * ray.dir + query.distance.yank;
         travelled += query.distance.distance;
         if travelled > 100. {
+            query.material = ambient_material;
             return HitResult(i, CAST_MAX, ray.position, query, material_color(query.material));
         }
     }
@@ -167,7 +169,7 @@ fn ray_trace(ray: Ray) -> TraceResult {
     }
     if material_type(hit.query.material) == MATERIAL_TYPE_EMISSIVE {
         let light_strength = material_attrib(hit.query.material);
-        moment.emittance = 1.;
+        moment.emittance = light_strength;
         moment.irradiance = 0.;
         return TraceResult(moment, hit.destination, true);
     }
@@ -180,7 +182,7 @@ fn ray_trace(ray: Ray) -> TraceResult {
         if material_type(bounce.query.material) != MATERIAL_TYPE_EMISSIVE {
             continue;
         }
-        irradiance += 1.;// material_attrib(hit.query.material);
+        irradiance += material_attrib(bounce.query.material);
     }
     moment.irradiance += irradiance;
     irradiance_square += irradiance * irradiance;
@@ -251,7 +253,7 @@ fn material_type(material: Material) -> u32 {
 
 fn material_attrib(material: Material) -> f32 {
     let raw_attrib = bits_get_range(material.data, 0u, 5u);
-    return pow(2., f32(raw_attrib) / 4.) - 1.;
+    return pow(2., f32(raw_attrib) / 16.) - 1.;
 }
 
 fn material_present(material: Material) -> bool {
@@ -496,18 +498,25 @@ fn denoise(index: i32, coords: vec2<i32>, step: f32) -> MomentInfo {
 
 const HISTORY_FACTOR: f32 = 0.05;
 
-fn select_closest_moment(uv: ptr<function, vec2<f32>>, index: i32, destination: vec3<f32>) -> MomentInfo {
+fn select_closest_moment(uv: ptr<function, vec2<f32>>, to: MomentInfo, index: i32, destination: vec3<f32>) -> MomentInfo {
     var min_distance = CAST_MAX;
     var moment: MomentInfo;
     var min_uv: vec2<f32>;
+    let uv_coords = fragment_to_screen_coords(*uv);
     for (var x = -1; x <= 1; x++) {
         for (var y = -1; y <= 1; y++) {
             let xy_uv = *uv + vec2<f32>(f32(x), f32(y)) / (render_data.screen * 0.5);
-            let coords = fragment_to_screen_coords(xy_uv);
-            if coords.x < 0 || coords.y < 0 || coords.x > i32(render_data.screen.x) || coords.y > i32(render_data.screen.y) {
+            let xy_coords = uv_coords + vec2<i32>(x, y);
+            if xy_coords.x < 0 || xy_coords.y < 0 || xy_coords.x > i32(render_data.screen.x) || xy_coords.y > i32(render_data.screen.y) {
                 continue;
             }
-            let unpacked = load_moment(coords, index);
+            let unpacked = load_moment(xy_coords, index);
+            let norm_dist = distance(unpacked.normal, to.normal);
+            let alb_dist = distance(unpacked.albedo, to.albedo);
+            if norm_dist > 0.1 || alb_dist > 0.1 {
+                continue;
+            }
+
             let ray = camera_to_ray(render_data.old_camera, xy_uv);
             let dist = distance(destination, ray.position + ray.dir * unpacked.depth);
             if dist < min_distance {
@@ -525,7 +534,7 @@ fn temporal_accumulate(hit: MomentInfo, indecies: StorageIndecies, in_pos: vec2<
     var org_hit = hit;
     let reconstructed_uv = world_space_to_screen_space(render_data.old_camera.position, render_data.old_camera.rotation, destination);
     var closest_uv = reconstructed_uv;
-    let prev_moment = select_closest_moment(&closest_uv, indecies.history, destination);
+    let prev_moment = select_closest_moment(&closest_uv, hit, indecies.history, destination); // load_moment(fragment_to_screen_coords(closest_uv), indecies.history);// select_closest_moment(&closest_uv, indecies.history, destination);
     let reprojected_coords = fragment_to_screen_coords(closest_uv);
     var denoised_hit = denoise(indecies.history, vec2<i32>(reprojected_coords), 1.);
 
@@ -571,6 +580,29 @@ fn fragment_to_screen_coords(uv: vec2<f32>) -> vec2<i32> {
 
 const VERY_ODD_FOV_NUMBER: f32 = 2.0;
 
+fn filmic_tone_mapping(color: vec3<f32>) -> vec3<f32> {
+    let color = max(vec3<f32>(0.), color - 0.004);
+    return (color * (6.2 * color + 0.5)) / (color * (6.2 * color + 1.7) + 0.06);
+}
+
+fn aces_tone_mapping(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return (x * (a * x + b)) / saturate((x * (c * x + d) + e));
+}
+
+fn white_preserving_luma_based_reinhard_tone_mapping(color: vec3<f32>) -> vec3<f32> {
+    let white = 2.;
+    let luma = dot(vec3<f32>(0.2126, 0.7152, 0.0722), color);
+    let tone_mapped_luma = luma * (1. + luma / (white * white)) / (1. + luma);
+    let color = color * (tone_mapped_luma / luma);
+    let inv_gamma = 1. / 2.2;
+    return pow(color, vec3<f32>(inv_gamma));
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let coords = fragment_to_screen_coords(in.position);
@@ -601,9 +633,6 @@ fn compute_storage_indecies(frame: u32, stage: u32) -> StorageIndecies {
     // 1 - Denoise 2. => N | C/H| T
     // 2 - Denoise 4. => C | H  | N
     // 3 - Denoise 8. => N | H  | C
-
-
-
 
     let history = frame % 3u;
     if stage == 0u {
