@@ -131,7 +131,7 @@ fn cast_to_hit(ray: Ray) -> HitResult {
     let start = ray.position;
     var travelled = 0.;
     var query: ChunkQueryResult;
-    let ambient_material = Material((255u << 24u) | (255u << 16u) | (255u << 8u) | (MATERIAL_TYPE_EMISSIVE << 6u) | (5u));
+    let ambient_material = Material((255u << 24u) | (255u << 16u) | (255u << 8u) | (MATERIAL_TYPE_EMISSIVE << 6u) | (1u));
     for (var i = 0; i < MAX_STEPS; i++) {
         query = chunk_query_ray(ray);
         if query.present {
@@ -139,8 +139,8 @@ fn cast_to_hit(ray: Ray) -> HitResult {
         }
         ray.position += query.distance.distance * ray.dir + query.distance.yank;
         travelled += query.distance.distance;
-        if travelled > 100. {
-            query.material = ambient_material;
+        if travelled > 16. {
+            // query.material = ambient_material;
             return HitResult(i, CAST_MAX, ray.position, query, material_color(query.material));
         }
     }
@@ -154,7 +154,7 @@ struct TraceResult {
     present: bool,
 }
 
-const SECONDARY_RAYS = 4;
+const SECONDARY_RAYS = 2;
 
 fn ray_trace(ray: Ray) -> TraceResult {
     var color = vec3<f32>(0.);
@@ -557,6 +557,196 @@ fn temporal_accumulate(hit: MomentInfo, indecies: StorageIndecies, in_pos: vec2<
 @group(2)@binding(0)
 var moments: texture_storage_2d_array<rgba32uint, read_write>;
 
+//
+// --- Stable resampling
+//
+
+struct Sample {
+    dir: vec3<f32>,
+    present: bool,
+    weight: f32,
+}
+
+struct Samples {
+    samples: array<Sample, 4>,
+}
+
+fn pack_sample(sample: Sample) -> u32 {
+    let nfactor = 127.;
+    let x = clamp(u32(sample.dir.x * nfactor + 128.), 0u, 255u) << 24u;
+    let y = clamp(u32(sample.dir.y * nfactor + 128.), 0u, 255u) << 16u;
+    let z = clamp(u32(sample.dir.z * nfactor + 128.), 0u, 255u) << 8u;
+    let w = select(0u, 1u << 7u, sample.present) | clamp(u32(sample.weight), 0u, 127u);
+    return x | y | z | w;
+}
+
+fn unpack_sample(sample: u32) -> Sample {
+    let nfactor = 127.;
+    let x = (f32((sample >> 24u) & 0xFFu) - 128.) / nfactor;
+    let y = (f32((sample >> 16u) & 0xFFu) - 128.) / nfactor;
+    let z = (f32((sample >> 8u) & 0xFFu) - 128.) / nfactor;
+    let w = max(f32(sample & 0x7Fu), 1.);
+    return Sample(vec3<f32>(x, y, z), (sample & 0x80u) == 0x80u, w);
+}
+
+fn pack_samples(samples: Samples) -> vec4<u32> {
+    return vec4<u32>(
+        pack_sample(samples.samples[0]),
+        pack_sample(samples.samples[1]),
+        pack_sample(samples.samples[2]),
+        pack_sample(samples.samples[3]),
+    );
+}
+
+fn unpack_samples(samples: vec4<u32>) -> Samples {
+    return Samples(array<Sample, 4>(
+        unpack_sample(samples.x),
+        unpack_sample(samples.y),
+        unpack_sample(samples.z),
+        unpack_sample(samples.w)
+    ));
+}
+
+fn load_samples(coords: vec2<i32>) -> Samples {
+    let image = select(0, 1, (render_data.frame & 1u) == 0u);
+    return unpack_samples(textureLoad(samples, coords, image));
+}
+
+fn store_samples(coords: vec2<i32>, s: Samples) {
+    let image = select(1, 0, (render_data.frame & 1u) == 0u);
+    textureStore(samples, coords, image, pack_samples(s));
+}
+
+fn samples_first_bounce_samples(hit: MomentInfo, destination: vec3<f32>) -> Samples {
+    let indecies = compute_storage_indecies(render_data.frame, 0u);
+    let reconstructed_uv = world_space_to_screen_space(render_data.old_camera.position, render_data.old_camera.rotation, destination);
+    var closest_uv = reconstructed_uv;
+    let moment = select_closest_moment(&closest_uv, hit, indecies.history, destination);
+    let samples = load_samples(fragment_to_screen_coords(closest_uv));
+    let ray = camera_to_ray(render_data.old_camera, reconstructed_uv);
+    let pos = ray.position + ray.dir * moment.depth;
+    if distance(pos, destination) > 0.02 {
+        return unpack_samples(vec4<u32>(0u));
+    }
+    return samples;
+}
+
+struct SampleRecommendation {
+    dir: vec3<f32>,
+    _random: bool,
+}
+
+fn sample_recommended_dir(sample: Sample, normal: vec3<f32>) -> SampleRecommendation {
+    if !sample.present || rand_float() > pow(1. - 1. / sample.weight, 0.5) - 0.01 {
+        return SampleRecommendation(unit_vec_on_hemisphere(normal), true);
+    }
+    return SampleRecommendation(sample.dir, false);
+}
+
+fn sample_update(sample: Sample, recommendation: SampleRecommendation, hit: bool) -> Sample {
+    var sample = sample;
+    if hit {
+        sample.present = true;
+        sample.dir = recommendation.dir;
+        return sample;
+    }
+
+    sample.weight += 1.;
+    sample.present = false;
+    return sample;
+}
+
+fn sample_cast_to_hit(ray: Ray) -> HitResult {
+    var ray = ray;
+    let start = ray.position;
+    var travelled = 0.;
+    var query: ChunkQueryResult;
+    for (var i = 0; i < MAX_STEPS; i++) {
+        query = chunk_query_ray(ray);
+        if query.present {
+            return HitResult(i, travelled, start + ray.dir * travelled, query, material_color(query.material));
+        }
+        ray.position += query.distance.distance * ray.dir + query.distance.yank;
+        travelled += query.distance.distance;
+        if travelled > 100. {
+            return HitResult(i, CAST_MAX, ray.position, query, material_color(query.material));
+        }
+    }
+    return HitResult(MAX_STEPS, CAST_MAX, ray.position, query, material_color(query.material));
+}
+
+fn samples_finish(coords: vec2<i32>, samples: Samples) {
+    store_samples(coords, samples);
+}
+
+fn sample_ray_trace(coords: vec2<i32>, ray: Ray) -> TraceResult {
+    var color = vec3<f32>(0.);
+    var hit = cast_to_hit(ray);
+    var moment: MomentInfo ;
+    moment.albedo = hit.color;
+    moment.depth = hit.distance;
+    moment.normal = hit.query.normal;
+    moment.irradiance = 0.;
+    if hit.distance == CAST_MAX {
+        return TraceResult(moment, hit.destination, false);
+    }
+    if material_type(hit.query.material) == MATERIAL_TYPE_EMISSIVE {
+        let light_strength = material_attrib(hit.query.material);
+        moment.emittance = light_strength;
+        moment.irradiance = 0.;
+        return TraceResult(moment, hit.destination, true);
+    }
+    var irradiance = 0.;
+    var irradiance_square = 0.;
+
+    var samples = samples_first_bounce_samples(moment, hit.destination);
+    let location = hit.destination + hit.query.normal * 0.01;
+
+
+    // Copy-Pasta until naga fixes array access
+        {
+        let idx = 0;
+        let sample = samples.samples[idx];
+        let ray = sample_recommended_dir(sample, hit.query.normal);
+        let bounce = cast_to_hit(Ray(location, ray.dir));
+        if material_type(bounce.query.material) == MATERIAL_TYPE_EMISSIVE {
+            irradiance += material_attrib(hit.query.material) / sample.weight;
+            samples.samples[idx] = sample_update(sample, ray, true);
+        } else {
+            samples.samples[idx] = sample_update(sample, ray, false);
+        }
+    }
+
+        {
+        let idx = 1;
+        let sample = samples.samples[idx];
+        let ray = sample_recommended_dir(sample, hit.query.normal);
+        let bounce = cast_to_hit(Ray(location, ray.dir));
+        if material_type(bounce.query.material) == MATERIAL_TYPE_EMISSIVE {
+            irradiance += material_attrib(hit.query.material) / sample.weight;
+            samples.samples[idx] = sample_update(sample, ray, true);
+        } else {
+            samples.samples[idx] = sample_update(sample, ray, false);
+        }
+    }
+
+    samples_finish(coords, samples);
+
+    moment.irradiance += irradiance;
+    irradiance_square += irradiance * irradiance;
+
+    moment.irradiance /= f32(SECONDARY_RAYS);
+    irradiance_square /= f32(SECONDARY_RAYS);
+
+    moment.variance = abs(irradiance_square - moment.irradiance * moment.irradiance);
+    return TraceResult(moment, hit.destination, true);
+}
+
+
+@group(2)@binding(1)
+var samples: texture_storage_2d_array<rgba32uint, read_write>;
+
+
 // Fragment shader
 
 struct Camera {
@@ -608,6 +798,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let coords = fragment_to_screen_coords(in.position);
     let indecies = compute_storage_indecies(render_data.frame, 3u);
     let moment = denoise(indecies.current, coords, 8.);
+    // let moment = load_moment(coords, indecies.current);
     // let col = vec3<f32>(moment.depth / 20.);
     // let col = vec3<f32>(moment.irradiance);
 
@@ -703,6 +894,7 @@ fn compute_denoise1(@builtin(global_invocation_id) global_id: vec3<u32>) {
 fn compute_denoise2(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let coords = vec2<i32>(global_id.xy);
     let indecies = compute_storage_indecies(render_data.frame, 1u);
+    // textureStore(moments, coords, indecies.next, textureLoad(moments, coords, indecies.current));
     textureStore(moments, coords, indecies.next, packMoment(denoise(indecies.current, coords, 2.)));
 }
 
@@ -710,5 +902,6 @@ fn compute_denoise2(@builtin(global_invocation_id) global_id: vec3<u32>) {
 fn compute_denoise3(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let coords = vec2<i32>(global_id.xy);
     let indecies = compute_storage_indecies(render_data.frame, 2u);
+    // textureStore(moments, coords, indecies.next, textureLoad(moments, coords, indecies.current));
     textureStore(moments, coords, indecies.next, packMoment(denoise(indecies.current, coords, 4.)));
 }

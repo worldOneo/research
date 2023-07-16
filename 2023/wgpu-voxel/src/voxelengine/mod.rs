@@ -26,7 +26,7 @@ struct State {
 
     render_input: buffers::Data<buffers::RenderInputData>,
     chunk: buffers::Data<world::Chunk>,
-    svgf: buffers::TextureThing,
+    svgf: buffers::Texutures,
 }
 
 impl State {

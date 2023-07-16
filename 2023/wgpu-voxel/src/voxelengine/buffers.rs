@@ -171,13 +171,14 @@ pub fn create_chunk_buffer(device: &Device) -> Data<world::Chunk> {
     }
 }
 
-pub struct TextureThing {
-    pub buffer: wgpu::Texture,
+pub struct Texutures {
+    pub svgf: wgpu::Texture,
+    pub resampling: wgpu::Texture,
     pub bind_group: BindGroup,
     pub layout: BindGroupLayout,
 }
 
-pub fn create_svgf_buffer(device: &Device) -> TextureThing {
+pub fn create_svgf_buffer(device: &Device) -> Texutures {
     let svgf_buffer = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("SVGF Buffer"),
         size: wgpu::Extent3d {
@@ -193,35 +194,71 @@ pub fn create_svgf_buffer(device: &Device) -> TextureThing {
         view_formats: &[wgpu::TextureFormat::Rgba32Uint],
     });
 
-    let svgf_binding_group_layout =
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::ReadWrite,
-                    format: wgpu::TextureFormat::Rgba32Uint,
-                    view_dimension: wgpu::TextureViewDimension::D2Array,
-                },
-                count: Some(3.try_into().unwrap()),
-            }],
-            label: Some("svgf_layout"),
-        });
-
-    let svgf_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("svgf_bind_group"),
-        layout: &svgf_binding_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(
-                &svgf_buffer.create_view(&wgpu::TextureViewDescriptor::default()),
-            ),
-        }],
+    let resampling_buffer = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Resampling Buffer"),
+        size: wgpu::Extent3d {
+            width: 1920,
+            height: 1080,
+            depth_or_array_layers: 2,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Uint,
+        usage: wgpu::TextureUsages::STORAGE_BINDING,
+        view_formats: &[wgpu::TextureFormat::Rgba32Uint],
     });
 
-    TextureThing {
-        buffer: svgf_buffer,
-        bind_group: svgf_bind_group,
-        layout: svgf_binding_group_layout,
+    let texture_buffer_binding_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::ReadWrite,
+                        format: wgpu::TextureFormat::Rgba32Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::ReadWrite,
+                        format: wgpu::TextureFormat::Rgba32Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                    },
+                    count: None,
+                },
+            ],
+            label: Some("texture_buffer_layout"),
+        });
+
+    let texture_buffer_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("texture_buffer_bind_group"),
+        layout: &texture_buffer_binding_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(
+                    &svgf_buffer.create_view(&wgpu::TextureViewDescriptor::default()),
+                ),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(
+                    &resampling_buffer.create_view(&wgpu::TextureViewDescriptor::default()),
+                ),
+            },
+        ],
+    });
+
+    Texutures {
+        svgf: svgf_buffer,
+        resampling: resampling_buffer,
+        bind_group: texture_buffer_bind_group,
+        layout: texture_buffer_binding_group_layout,
     }
 }
