@@ -331,7 +331,7 @@ fn rand_float() -> f32 {
     return f32(wang_hash()) / 4294967295.;
 }
 
-const TWO_PI = 6.28318530718;
+const TWO_PI = 6.283185307179586;
 
 // https://graphics.pixar.com/library/OrthonormalB/paper.pdf
 fn orthonormal_basis(n: vec3<f32>, b1: ptr<function, vec3<f32>>, b2: ptr<function, vec3<f32>>) {
@@ -565,10 +565,11 @@ struct Sample {
     dir: vec3<f32>,
     present: bool,
     weight: f32,
+    attempts: u32,
 }
 
 struct Samples {
-    samples: array<Sample, 4>,
+    samples: array<Sample, 3>,
 }
 
 fn pack_sample(sample: Sample) -> u32 {
@@ -580,13 +581,13 @@ fn pack_sample(sample: Sample) -> u32 {
     return x | y | z | w;
 }
 
-fn unpack_sample(sample: u32) -> Sample {
+fn unpack_sample(sample: u32, attempts: u32) -> Sample {
     let nfactor = 127.;
     let x = (f32((sample >> 24u) & 0xFFu) - 128.) / nfactor;
     let y = (f32((sample >> 16u) & 0xFFu) - 128.) / nfactor;
     let z = (f32((sample >> 8u) & 0xFFu) - 128.) / nfactor;
     let w = max(f32(sample & 0x7Fu), 1.);
-    return Sample(vec3<f32>(x, y, z), (sample & 0x80u) == 0x80u, w);
+    return Sample(vec3<f32>(x, y, z), (sample & 0x80u) == 0x80u, w, attempts);
 }
 
 fn pack_samples(samples: Samples) -> vec4<u32> {
@@ -594,16 +595,15 @@ fn pack_samples(samples: Samples) -> vec4<u32> {
         pack_sample(samples.samples[0]),
         pack_sample(samples.samples[1]),
         pack_sample(samples.samples[2]),
-        pack_sample(samples.samples[3]),
+        (min(samples.samples[0].attempts, 255u) << 16u) | (min(samples.samples[1].attempts, 255u) << 8u) | min(samples.samples[2].attempts, 255u)
     );
 }
 
 fn unpack_samples(samples: vec4<u32>) -> Samples {
-    return Samples(array<Sample, 4>(
-        unpack_sample(samples.x),
-        unpack_sample(samples.y),
-        unpack_sample(samples.z),
-        unpack_sample(samples.w)
+    return Samples(array<Sample, 3>(
+        unpack_sample(samples.x, (samples.w >> 16u) & 0xFFu),
+        unpack_sample(samples.y, (samples.w >> 8u) & 0xFFu),
+        unpack_sample(samples.z, samples.w & 0xFFu)
     ));
 }
 
@@ -637,23 +637,36 @@ struct SampleRecommendation {
 }
 
 fn sample_recommended_dir(sample: Sample, normal: vec3<f32>) -> SampleRecommendation {
-    if !sample.present || rand_float() > pow(1. - 1. / sample.weight, 0.5) - 0.01 {
+    if !sample.present {
+        return SampleRecommendation(unit_vec_on_hemisphere(normal), false);
+    }
+
+    if rand_float() > pow(1. - 1. / sample.weight, 0.5) - 0.01 {
         return SampleRecommendation(unit_vec_on_hemisphere(normal), true);
     }
     return SampleRecommendation(sample.dir, false);
 }
 
 fn sample_update(sample: Sample, recommendation: SampleRecommendation, hit: bool) -> Sample {
-    var sample = sample;
+    var n_sample = sample;
+
     if hit {
-        sample.present = true;
-        sample.dir = recommendation.dir;
-        return sample;
+        n_sample.present = true;
+        n_sample.dir = recommendation.dir;
+        if recommendation._random {
+            n_sample.weight = f32(max(n_sample.attempts, 1u));
+            n_sample.attempts = 1u;
+        }
+        return n_sample;
     }
 
-    sample.weight += 1.;
-    sample.present = false;
-    return sample;
+    if recommendation._random {
+        n_sample.attempts += 1u;
+    } else {
+        n_sample.weight += 1.;
+        n_sample.present = false;
+    }
+    return n_sample;
 }
 
 fn sample_cast_to_hit(ray: Ray) -> HitResult {
@@ -710,7 +723,7 @@ fn sample_ray_trace(coords: vec2<i32>, ray: Ray) -> TraceResult {
         let ray = sample_recommended_dir(sample, hit.query.normal);
         let bounce = cast_to_hit(Ray(location, ray.dir));
         if material_type(bounce.query.material) == MATERIAL_TYPE_EMISSIVE {
-            irradiance += material_attrib(hit.query.material) / sample.weight;
+            irradiance += material_attrib(bounce.query.material) / (sample.weight);
             samples.samples[idx] = sample_update(sample, ray, true);
         } else {
             samples.samples[idx] = sample_update(sample, ray, false);
@@ -723,7 +736,7 @@ fn sample_ray_trace(coords: vec2<i32>, ray: Ray) -> TraceResult {
         let ray = sample_recommended_dir(sample, hit.query.normal);
         let bounce = cast_to_hit(Ray(location, ray.dir));
         if material_type(bounce.query.material) == MATERIAL_TYPE_EMISSIVE {
-            irradiance += material_attrib(hit.query.material) / sample.weight;
+            irradiance += material_attrib(bounce.query.material) / (sample.weight);
             samples.samples[idx] = sample_update(sample, ray, true);
         } else {
             samples.samples[idx] = sample_update(sample, ray, false);
@@ -873,7 +886,8 @@ fn compute_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
     wang_hash_init(vec2<u32>(coords), render_data.frame);
 
     let ray = camera_to_ray(render_data.camera, in_pos);
-    let hit = ray_trace(ray);
+    let hit = sample_ray_trace(coords, ray);
+    // let hit = ray_trace(ray);
     let indecies = compute_storage_indecies(render_data.frame, 0u);
     textureStore(moments, coords, indecies.current, packMoment(hit.moment));
 }
@@ -887,6 +901,7 @@ fn compute_denoise1(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let ray = camera_to_ray(render_data.camera, in_pos);
     let dest = ray.position + ray.dir * hit_moment.depth;
     let moment = temporal_accumulate(hit_moment, indecies, in_pos, dest);
+    // textureStore(moments, coords, indecies.next, packMoment(hit_moment));
     textureStore(moments, coords, indecies.next, packMoment(moment));
 }
 
