@@ -1,7 +1,7 @@
 using Silk.NET.OpenGL;
 using System;
 
-namespace Tutorial
+namespace Voxelator
 {
     //The vertex array object abstraction.
     public class VertexArrayObject<TVertexType, TIndexType> : IDisposable

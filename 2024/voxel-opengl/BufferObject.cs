@@ -1,7 +1,7 @@
 using Silk.NET.OpenGL;
 using System;
 
-namespace Tutorial
+namespace Voxelator
 {
     //Our buffer object abstraction.
     public class BufferObject<TDataType> : IDisposable

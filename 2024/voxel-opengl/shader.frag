@@ -11,6 +11,15 @@ out vec4 FragColor;
 layout(rg16ui, binding = 3) uniform uimage2D uTexture;
 ivec2 screenCord;
 
+// Voxel format: 32bit integer
+// PEOOOOOTTTTTTSSSSSRRRRRGGGGGBBBBB
+// 1bit p = Present
+// 1bit e = emissive
+// 5bit o = opacity or emissivness
+// 5bit t = roughness of the surface
+// 5bit s = specularity
+// RGB each 5 bits
+
 void main() {
   screenCord = ivec2((fUv + 1.) * 0.5 * vec2(800, 600));
   vec4 uvColor = (vec4(fUv, 0.0, 0.0) + 1.) * 0.5;

@@ -1,10 +1,9 @@
 ﻿using Silk.NET.Input;
 using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
-using System;
 using Silk.NET.Maths;
 
-namespace Tutorial
+namespace Voxelator
 {
     class Program
     {
@@ -37,6 +36,11 @@ namespace Tutorial
 
         private static void Main(string[] args)
         {
+            var tree = new Octree(new(0, 0, 0), 8);
+            tree.Insert(new(1, 1, 1), 1);
+            tree.Insert(new(1, 0, 1), 0);
+            tree.Insert(new(5, 5, 5), 5);
+            Array.ForEach(tree.Encode(), Console.WriteLine);
             var options = WindowOptions.Default;
             options.Size = new Vector2D<int>(800, 600);
             options.Title = "LearnOpenGL with Silk.NET";

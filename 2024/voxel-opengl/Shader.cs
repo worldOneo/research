@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using Silk.NET.OpenGL;
 
-namespace Tutorial
+namespace Voxelator
 {
     public class Shader : IDisposable
     {
