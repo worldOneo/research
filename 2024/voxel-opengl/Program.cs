@@ -19,18 +19,21 @@ namespace Tutorial
 
         private static readonly float[] Vertices =
         {
-            -1.0f, -1.0f, 0.0f,
-            -1.0f, +1.0f, 0.0f,
-            +1.0f, +1.0f, 0.0f,
-            +1.0f, -1.0f, 0.0f,
+            -1.0f,
+            -1.0f,
+            0.0f,
+            -1.0f,
+            +1.0f,
+            0.0f,
+            +1.0f,
+            +1.0f,
+            0.0f,
+            +1.0f,
+            -1.0f,
+            0.0f,
         };
 
-        private static readonly uint[] Indices =
-        {
-          0, 3, 1,
-          2, 1, 3
-        };
-
+        private static readonly uint[] Indices = { 0, 3, 1, 2, 1, 3 };
 
         private static void Main(string[] args)
         {
@@ -49,6 +52,7 @@ namespace Tutorial
             window.Dispose();
         }
 
+        private static uint testTexture;
 
         private static void OnLoad()
         {
@@ -70,17 +74,51 @@ namespace Tutorial
             Vao.VertexAttributePointer(1, 2, VertexAttribPointerType.Float, 3, 3);
 
             Shader = new Shader(Gl, "shader.vert", "shader.frag");
+
+            testTexture = Gl.GenTextures(1);
+            Gl.ActiveTexture(TextureUnit.Texture3);
+            Gl.BindTexture(GLEnum.Texture2D, testTexture);
+            Console.WriteLine(Gl.GetError());
+            unsafe
+            {
+                // TODO: Only this works. TexImage2D is cooked.
+                // TODO: Only this works. TexImage2D is cooked.
+                // TODO: Only this works. TexImage2D is cooked.
+                // TODO: Only this works. TexImage2D is cooked.
+                Gl.TexStorage2D(
+                    GLEnum.Texture2D,
+                    1,
+                    GLEnum.RG16ui,
+                    (uint)window.Size.X,
+                    (uint)window.Size.Y
+                );
+                Console.WriteLine(Gl.GetError());
+            }
+            Console.WriteLine(Gl.GetError());
+            Gl.BindTexture(GLEnum.Texture2D, 0);
+            Console.WriteLine(Gl.GetError());
         }
 
         private static unsafe void OnRender(double obj)
         {
-            Gl.Clear((uint) ClearBufferMask.ColorBufferBit);
+            // Gl.Clear(ClearBufferMask.ColorBufferBit);
 
             //Binding and using our VAO and shader.
             Vao.Bind();
+            // Gl.ActiveTexture(TextureUnit.Texture1);
+            // Gl.BindTexture(TextureTarget.Texture2D, testTexture);
+            Gl.BindImageTexture(3, testTexture, 0, false, 0, GLEnum.ReadWrite, GLEnum.RG16ui);
+            Console.WriteLine(Gl.GetError());
             Shader.Use();
+            Console.WriteLine(Gl.GetError());
 
-            Gl.DrawElements(PrimitiveType.Triangles, (uint) Indices.Length, DrawElementsType.UnsignedInt, null);
+            Gl.DrawElements(
+                PrimitiveType.Triangles,
+                (uint)Indices.Length,
+                DrawElementsType.UnsignedInt,
+                null
+            );
+            Console.WriteLine(Gl.GetError());
         }
 
         private static void OnFramebufferResize(Vector2D<int> newSize)
