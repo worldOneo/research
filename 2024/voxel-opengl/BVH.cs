@@ -11,11 +11,11 @@ namespace Voxelator
 
     public struct CoordI
     {
-        public ulong x;
-        public ulong y;
-        public ulong z;
+        public long x;
+        public long y;
+        public long z;
 
-        public CoordI(ulong x, ulong y, ulong z)
+        public CoordI(long x, long y, long z)
         {
             this.x = x;
             this.y = y;
@@ -133,25 +133,26 @@ namespace Voxelator
                 output.Add(0);
                 output.Add(0);
                 output.Add(0);
-                index += 1;
-                return index - 1;
+                index += 8;
+                return index - 8;
             }
 
             public void WriteNode(int idx, OctreeNode node)
             {
-                output[idx * 8 + 0] = node[0];
-                output[idx * 8 + 1] = node[1];
-                output[idx * 8 + 2] = node[2];
-                output[idx * 8 + 3] = node[3];
-                output[idx * 8 + 4] = node[4];
-                output[idx * 8 + 5] = node[5];
-                output[idx * 8 + 6] = node[6];
-                output[idx * 8 + 7] = node[7];
+                output[idx + 0] = node[0];
+                output[idx + 1] = node[1];
+                output[idx + 2] = node[2];
+                output[idx + 3] = node[3];
+                output[idx + 4] = node[4];
+                output[idx + 5] = node[5];
+                output[idx + 6] = node[6];
+                output[idx + 7] = node[7];
             }
 
             public void Append(int data)
             {
                 output.Add(data);
+                index += 1;
             }
 
             public int[] Done()
@@ -163,9 +164,9 @@ namespace Voxelator
         public int[] Encode()
         {
             Encoder encoder = new();
-            encoder.Append(Unsafe.BitCast<float, int>(origin.x));
-            encoder.Append(Unsafe.BitCast<float, int>(origin.y));
-            encoder.Append(Unsafe.BitCast<float, int>(origin.z));
+            encoder.Append(Unsafe.BitCast<float, int>((float)origin.x));
+            encoder.Append(Unsafe.BitCast<float, int>((float)origin.y));
+            encoder.Append(Unsafe.BitCast<float, int>((float)origin.z));
             if (node == int.MaxValue)
             {
                 encoder.Append(int.MaxValue);

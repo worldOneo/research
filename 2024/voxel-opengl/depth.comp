@@ -1,14 +1,16 @@
 #version 450 core
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 //@include voxels.glsl
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 layout(rg16ui, binding = 3) uniform uimage2D uTexture;
 ivec2 screenCord;
 
 void main() {
   screenCord = ivec2(gl_GlobalInvocationID.xy);
   vec2 fUv = vec2(screenCord) / vec2(800, 600);
+  Ray ray;
+  RayHit hit = Ray_cast(ray);
   //Here we are setting our output variable, for which the name is not important.
-  imageStore(uTexture, screenCord, uvec4(fUv * 255., 0, 0));
+  imageStore(uTexture, screenCord, uvec4(hit.voxel.color.rg*255., 0, 0));
 }

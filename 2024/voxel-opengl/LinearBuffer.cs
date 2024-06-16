@@ -33,9 +33,6 @@ namespace Voxelator
         public unsafe void Fill(TextureUnit textureUnit, Span<byte> data, uint width)
         {
             Bind(textureUnit);
-            Console.WriteLine(_gl.GetError());
-
-
             //We want the ability to create a texture using data generated from code aswell.
             fixed (void* d = &data[0])
             {
@@ -49,6 +46,26 @@ namespace Voxelator
                     _pixelFormat,
                     _pixelType,
                     d
+                );
+                _gl.TexParameter(
+                    _textureTarget,
+                    TextureParameterName.TextureWrapS,
+                    (int)GLEnum.ClampToEdge
+                );
+                _gl.TexParameter(
+                    _textureTarget,
+                    TextureParameterName.TextureWrapT,
+                    (int)GLEnum.ClampToEdge
+                );
+                _gl.TexParameter(
+                    _textureTarget,
+                    TextureParameterName.TextureMinFilter,
+                    (int)GLEnum.Nearest
+                );
+                _gl.TexParameter(
+                    _textureTarget,
+                    TextureParameterName.TextureMagFilter,
+                    (int)GLEnum.Nearest
                 );
             }
         }

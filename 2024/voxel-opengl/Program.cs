@@ -38,7 +38,7 @@ namespace Voxelator
 
         private static void Main(string[] args)
         {
-            tree = new Octree(new(0, 0, 0), 8);
+            tree = new Octree(new(1, 1, 1), 8);
             tree.Insert(new(1, 1, 1), 1);
             tree.Insert(new(1, 0, 1), 0);
             tree.Insert(new(5, 5, 5), 5);
@@ -97,16 +97,17 @@ namespace Voxelator
             octree = new LinearBuffer(
                 Gl,
                 TextureTarget.Texture1D,
-                PixelFormat.RG,
-                InternalFormat.RG,
-                PixelType.UnsignedInt
+                PixelFormat.RGInteger,
+                InternalFormat.RG16ui,
+                PixelType.Short
             );
             Console.WriteLine(Gl.GetError());
 
             int[] data = tree.Encode();
+            Console.WriteLine("First int: {0}", data[0]);
             byte[] result = new byte[data.Length * sizeof(int)];
             System.Buffer.BlockCopy(data, 0, result, 0, result.Length);
-            octree.Fill(TextureUnit.Texture0, result, (uint)data.Count());
+            octree.Fill(TextureUnit.Texture1, result, (uint)data.Count());
             // Gl.Info
             Console.WriteLine(Gl.GetError());
         }
@@ -117,7 +118,7 @@ namespace Voxelator
 
             //Binding and using our VAO and shader.
             Vao.Bind();
-            octree.Bind(TextureUnit.Texture0);
+            octree.Bind(TextureUnit.Texture1);
             depthBuffer.Bind(GLEnum.ReadWrite);
             compShader.Use((uint)window.Size.X, (uint)window.Size.Y, 1);
             // TODO: Do compute shader sufficiently coordinate?
