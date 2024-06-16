@@ -1,0 +1,11 @@
+#version 450 core
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+layout(rg16ui, binding = 3) uniform uimage2D uTexture;
+ivec2 screenCord;
+
+void main() {
+  screenCord = ivec2(gl_GlobalInvocationID.xy);
+  vec2 fUv = vec2(screenCord) / vec2(800, 600);
+  //Here we are setting our output variable, for which the name is not important.
+  imageStore(uTexture, screenCord, uvec4(fUv * 255., 0, 0));
+}

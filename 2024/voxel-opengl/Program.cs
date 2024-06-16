@@ -14,6 +14,7 @@ namespace Voxelator
         private static BufferObject<float> Vbo;
         private static BufferObject<uint> Ebo;
         private static VertexArrayObject<float, uint> Vao;
+        private static ComputeShader compShader;
         private static Shader Shader;
 
         private static readonly float[] Vertices =
@@ -77,6 +78,7 @@ namespace Voxelator
             Vao.VertexAttributePointer(0, 3, VertexAttribPointerType.Float, 3, 0);
             Vao.VertexAttributePointer(1, 2, VertexAttribPointerType.Float, 3, 3);
 
+            compShader = new ComputeShader(Gl, "depth.comp");
             Shader = new Shader(Gl, "shader.vert", "shader.frag");
 
             testTexture = Gl.GenTextures(1);
@@ -113,6 +115,9 @@ namespace Voxelator
             // Gl.BindTexture(TextureTarget.Texture2D, testTexture);
             Gl.BindImageTexture(3, testTexture, 0, false, 0, GLEnum.ReadWrite, GLEnum.RG16ui);
             Console.WriteLine(Gl.GetError());
+            compShader.Use((uint)window.Size.X, (uint)window.Size.Y, 1);
+            // TODO: Do compute shader sufficiently coordinate?
+            Gl.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit);
             Shader.Use();
             Console.WriteLine(Gl.GetError());
 
