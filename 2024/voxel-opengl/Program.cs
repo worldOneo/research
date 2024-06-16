@@ -34,10 +34,11 @@ namespace Voxelator
         };
 
         private static readonly uint[] Indices = { 0, 3, 1, 2, 1, 3 };
+        private static Octree tree;
 
         private static void Main(string[] args)
         {
-            var tree = new Octree(new(0, 0, 0), 8);
+            tree = new Octree(new(0, 0, 0), 8);
             tree.Insert(new(1, 1, 1), 1);
             tree.Insert(new(1, 0, 1), 0);
             tree.Insert(new(5, 5, 5), 5);
@@ -57,10 +58,12 @@ namespace Voxelator
             window.Dispose();
         }
 
-        private static uint testTexture;
+        private static ImageBuffer depthBuffer;
+        private static LinearBuffer octree;
 
         private static void OnLoad()
         {
+            Console.WriteLine("Loaded");
             IInputContext input = window.CreateInput();
             for (int i = 0; i < input.Keyboards.Count; i++)
             {
@@ -81,27 +84,30 @@ namespace Voxelator
             compShader = new ComputeShader(Gl, "depth.comp");
             Shader = new Shader(Gl, "shader.vert", "shader.frag");
 
-            testTexture = Gl.GenTextures(1);
-            Gl.ActiveTexture(TextureUnit.Texture3);
-            Gl.BindTexture(GLEnum.Texture2D, testTexture);
+            depthBuffer = new ImageBuffer(
+                Gl,
+                3,
+                1,
+                TextureTarget.Texture2D,
+                PixelFormat.RG,
+                SizedInternalFormat.RG16ui
+            );
+            depthBuffer.Instantiate((uint)window.Size.X, (uint)window.Size.Y);
+
+            octree = new LinearBuffer(
+                Gl,
+                TextureTarget.Texture1D,
+                PixelFormat.RG,
+                InternalFormat.RG,
+                PixelType.UnsignedInt
+            );
             Console.WriteLine(Gl.GetError());
-            unsafe
-            {
-                // TODO: Only this works. TexImage2D is cooked.
-                // TODO: Only this works. TexImage2D is cooked.
-                // TODO: Only this works. TexImage2D is cooked.
-                // TODO: Only this works. TexImage2D is cooked.
-                Gl.TexStorage2D(
-                    GLEnum.Texture2D,
-                    1,
-                    GLEnum.RG16ui,
-                    (uint)window.Size.X,
-                    (uint)window.Size.Y
-                );
-                Console.WriteLine(Gl.GetError());
-            }
-            Console.WriteLine(Gl.GetError());
-            Gl.BindTexture(GLEnum.Texture2D, 0);
+
+            int[] data = tree.Encode();
+            byte[] result = new byte[data.Length * sizeof(int)];
+            System.Buffer.BlockCopy(data, 0, result, 0, result.Length);
+            octree.Fill(TextureUnit.Texture0, result, (uint)data.Count());
+            // Gl.Info
             Console.WriteLine(Gl.GetError());
         }
 
@@ -111,15 +117,12 @@ namespace Voxelator
 
             //Binding and using our VAO and shader.
             Vao.Bind();
-            // Gl.ActiveTexture(TextureUnit.Texture1);
-            // Gl.BindTexture(TextureTarget.Texture2D, testTexture);
-            Gl.BindImageTexture(3, testTexture, 0, false, 0, GLEnum.ReadWrite, GLEnum.RG16ui);
-            Console.WriteLine(Gl.GetError());
+            octree.Bind(TextureUnit.Texture0);
+            depthBuffer.Bind(GLEnum.ReadWrite);
             compShader.Use((uint)window.Size.X, (uint)window.Size.Y, 1);
             // TODO: Do compute shader sufficiently coordinate?
             Gl.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit);
             Shader.Use();
-            Console.WriteLine(Gl.GetError());
 
             Gl.DrawElements(
                 PrimitiveType.Triangles,
@@ -127,7 +130,6 @@ namespace Voxelator
                 DrawElementsType.UnsignedInt,
                 null
             );
-            Console.WriteLine(Gl.GetError());
         }
 
         private static void OnFramebufferResize(Vector2D<int> newSize)

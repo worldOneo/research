@@ -163,6 +163,9 @@ namespace Voxelator
         public int[] Encode()
         {
             Encoder encoder = new();
+            encoder.Append(Unsafe.BitCast<float, int>(origin.x));
+            encoder.Append(Unsafe.BitCast<float, int>(origin.y));
+            encoder.Append(Unsafe.BitCast<float, int>(origin.z));
             if (node == int.MaxValue)
             {
                 encoder.Append(int.MaxValue);

@@ -1,5 +1,8 @@
 #version 450 core
-layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+//@include voxels.glsl
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 layout(rg16ui, binding = 3) uniform uimage2D uTexture;
 ivec2 screenCord;
 
