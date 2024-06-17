@@ -20,13 +20,25 @@ namespace Voxelator
             {
                 _gl.BufferData(GLEnum.ShaderStorageBuffer, (uint)data.Length, d, GLEnum.StaticDraw);
             }
-            Console.WriteLine(_gl.GetError());
+        }
+
+        public unsafe void Fill(Span<int> data)
+        {
+            _gl.BindBuffer(GLEnum.ShaderStorageBuffer, _handle);
+            fixed (void* d = &data[0])
+            {
+                _gl.BufferData(
+                    GLEnum.ShaderStorageBuffer,
+                    4 * (uint)data.Length,
+                    d,
+                    GLEnum.StaticDraw
+                );
+            }
         }
 
         public void Bind(uint slot)
         {
             _gl.BindBufferBase(GLEnum.ShaderStorageBuffer, slot, _handle);
-            Console.WriteLine(_gl.GetError());
         }
 
         public void Dispose()

@@ -1,3 +1,4 @@
+//@include framedata.glsl
 struct Voxel {
   vec3 color;
   vec2 specRough;
@@ -7,6 +8,10 @@ struct Voxel {
 
 layout(std430, binding = 1) buffer octree
 {
+  float x;
+  float y;
+  float z;
+  uint dimensions;
   int[] octreeData; 
 };
 
@@ -29,6 +34,6 @@ RayHit Ray_cast(Ray ray) {
   float data = uintBitsToFloat(octreeData[0]);
   RayHit hit;
   // hit.voxel.color = vec3(uintBitsToFloat(data.x + (data.y << 16)));
-  hit.voxel.color = vec3(data, 0., 0.);
+  hit.voxel.color = vec3((frameData_frameNumber&255) / 255., 0., 0.);
   return hit;
 }

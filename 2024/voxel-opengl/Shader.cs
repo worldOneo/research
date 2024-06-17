@@ -79,7 +79,7 @@ namespace Voxelator
             //3) Upload the source to opengl.
             //4) Compile the shader.
             //5) Check for errors.
-            string src = ShaderTemplate.Render(path);
+            string src = new ShaderTemplate().Render(path);
             uint handle = _gl.CreateShader(type);
             _gl.ShaderSource(handle, src);
             _gl.CompileShader(handle);
