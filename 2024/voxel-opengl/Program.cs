@@ -59,7 +59,7 @@ namespace Voxelator
         }
 
         private static ImageBuffer depthBuffer;
-        private static LinearBuffer octree;
+        private static SSBO octree;
 
         private static void OnLoad()
         {
@@ -94,20 +94,14 @@ namespace Voxelator
             );
             depthBuffer.Instantiate((uint)window.Size.X, (uint)window.Size.Y);
 
-            octree = new LinearBuffer(
-                Gl,
-                TextureTarget.Texture1D,
-                PixelFormat.RGInteger,
-                InternalFormat.RG16ui,
-                PixelType.Short
-            );
+            octree = new SSBO(Gl);
             Console.WriteLine(Gl.GetError());
 
             int[] data = tree.Encode();
             Console.WriteLine("First int: {0}", data[0]);
             byte[] result = new byte[data.Length * sizeof(int)];
             System.Buffer.BlockCopy(data, 0, result, 0, result.Length);
-            octree.Fill(TextureUnit.Texture1, result, (uint)data.Count());
+            octree.Fill(result);
             // Gl.Info
             Console.WriteLine(Gl.GetError());
         }
@@ -118,7 +112,7 @@ namespace Voxelator
 
             //Binding and using our VAO and shader.
             Vao.Bind();
-            octree.Bind(TextureUnit.Texture1);
+            octree.Bind(1);
             depthBuffer.Bind(GLEnum.ReadWrite);
             compShader.Use((uint)window.Size.X, (uint)window.Size.Y, 1);
             // TODO: Do compute shader sufficiently coordinate?

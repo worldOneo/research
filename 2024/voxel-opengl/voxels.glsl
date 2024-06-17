@@ -5,7 +5,10 @@ struct Voxel {
   bool emissive;
 };
 
-layout(binding = 1) uniform usampler1D octree;
+layout(std430, binding = 1) buffer octree
+{
+  int[] octreeData; 
+};
 
 struct RayHit {
   Voxel voxel;
@@ -23,13 +26,9 @@ struct Ray {
 
 RayHit Ray_cast(Ray ray) {
   int stack[20];
-  uvec2 data = texture(octree, 1).rg;
+  float data = uintBitsToFloat(octreeData[0]);
   RayHit hit;
   // hit.voxel.color = vec3(uintBitsToFloat(data.x + (data.y << 16)));
-  if(0 == data.y && data.x == 0) {
-    hit.voxel.color = vec3(clamp(float(1.), 0., 1.));
-  } else {
-    hit.voxel.color = vec3(data.x, data.y, 0.);
-  }
+  hit.voxel.color = vec3(data, 0., 0.);
   return hit;
 }

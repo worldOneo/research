@@ -2,85 +2,36 @@ using Silk.NET.OpenGL;
 
 namespace Voxelator
 {
-    public class LinearBuffer : IDisposable
+    public class SSBO : IDisposable
     {
         private uint _handle;
         private GL _gl;
-        TextureTarget _textureTarget;
-        PixelFormat _pixelFormat;
-        InternalFormat _internalFormat;
-        PixelType _pixelType;
 
-        public LinearBuffer(
-            GL gl,
-            TextureTarget textureTarget,
-            PixelFormat pixelFormat,
-            InternalFormat internalFormat,
-            PixelType pixelType
-        )
+        public SSBO(GL gl)
         {
-            //Saving the gl instance.
             _gl = gl;
-            _textureTarget = textureTarget;
-            _pixelFormat = pixelFormat;
-            _internalFormat = internalFormat;
-            _pixelType = pixelType;
-
-            //Generating the opengl handle;
-            _handle = _gl.GenTextures(1);
+            _handle = _gl.GenBuffers(1);
         }
 
-        public unsafe void Fill(TextureUnit textureUnit, Span<byte> data, uint width)
+        public unsafe void Fill(Span<byte> data)
         {
-            Bind(textureUnit);
-            //We want the ability to create a texture using data generated from code aswell.
+            _gl.BindBuffer(GLEnum.ShaderStorageBuffer, _handle);
             fixed (void* d = &data[0])
             {
-                //Setting the data of a texture.
-                _gl.TexImage1D(
-                    _textureTarget,
-                    0,
-                    _internalFormat,
-                    width,
-                    0,
-                    _pixelFormat,
-                    _pixelType,
-                    d
-                );
-                _gl.TexParameter(
-                    _textureTarget,
-                    TextureParameterName.TextureWrapS,
-                    (int)GLEnum.ClampToEdge
-                );
-                _gl.TexParameter(
-                    _textureTarget,
-                    TextureParameterName.TextureWrapT,
-                    (int)GLEnum.ClampToEdge
-                );
-                _gl.TexParameter(
-                    _textureTarget,
-                    TextureParameterName.TextureMinFilter,
-                    (int)GLEnum.Nearest
-                );
-                _gl.TexParameter(
-                    _textureTarget,
-                    TextureParameterName.TextureMagFilter,
-                    (int)GLEnum.Nearest
-                );
+                _gl.BufferData(GLEnum.ShaderStorageBuffer, (uint)data.Length, d, GLEnum.StaticDraw);
             }
+            Console.WriteLine(_gl.GetError());
         }
 
-        public void Bind(TextureUnit textureSlot)
+        public void Bind(uint slot)
         {
-            //When we bind a texture we can choose which textureslot we can bind it to.
-            _gl.ActiveTexture(textureSlot);
-            _gl.BindTexture(_textureTarget, _handle);
+            _gl.BindBufferBase(GLEnum.ShaderStorageBuffer, slot, _handle);
+            Console.WriteLine(_gl.GetError());
         }
 
         public void Dispose()
         {
-            //In order to dispose we need to delete the opengl handle for the texure.
-            _gl.DeleteTexture(_handle);
+            _gl.DeleteBuffer(_handle);
         }
     }
 }
