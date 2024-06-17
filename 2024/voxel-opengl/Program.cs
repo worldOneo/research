@@ -51,14 +51,14 @@ namespace Voxelator
 
         private static void Main(string[] args)
         {
-            tree = new Octree(new(1, 1, 1), 8);
+            tree = new Octree(new(1, 0, 0), 8);
             tree.Insert(new(1, 1, 1), 1);
             tree.Insert(new(1, 0, 1), 0);
             tree.Insert(new(5, 5, 5), 5);
             Array.ForEach(tree.Encode(), Console.WriteLine);
             var options = WindowOptions.Default;
             options.Size = new Vector2D<int>(800, 600);
-            options.Title = "LearnOpenGL with Silk.NET";
+            options.Title = "The great Voxelator";
             window = Window.Create(options);
 
             window.Load += OnLoad;
@@ -165,13 +165,13 @@ namespace Voxelator
             var movementSpeed = 1f;
             if (inputs.keysPressed.Contains(Key.W))
                 deltaMov.X += movementSpeed * (float)dt;
-            if (inputs.keysPressed.Contains(Key.A))
+            if (inputs.keysPressed.Contains(Key.D))
                 deltaMov.Y += movementSpeed * (float)dt;
             if (inputs.keysPressed.Contains(Key.Space))
                 deltaMov.Z += movementSpeed * (float)dt;
             if (inputs.keysPressed.Contains(Key.S))
                 deltaMov.X -= movementSpeed * (float)dt;
-            if (inputs.keysPressed.Contains(Key.D))
+            if (inputs.keysPressed.Contains(Key.A))
                 deltaMov.Y -= movementSpeed * (float)dt;
             if (inputs.keysPressed.Contains(Key.ShiftLeft))
                 deltaMov.Z -= movementSpeed * (float)dt;
@@ -188,7 +188,7 @@ namespace Voxelator
         private static unsafe void OnRender(double dt)
         {
             HandleInput(dt);
-            Console.WriteLine(frameData.x);
+            Console.WriteLine(frameData);
             frameData.framecount += 1;
             frameDataBuffer.Fill(frameData.Encode());
             frameDataBuffer.Bind(4);

@@ -16,7 +16,7 @@ void main() {
 
 
   vec2 fUv = vec2(screenCord) / vec2(800, 600);
-  Ray ray;
+  Ray ray = Ray_new(vec3(frameData_x, frameData_y, frameData_z), vec3(1., 0., 0.));
   RayHit hit = Ray_cast(ray);
   //Here we are setting our output variable, for which the name is not important.
   imageStore(uTexture, screenCord, uvec4(hit.voxel.color.rg * 255., 0, 0));
