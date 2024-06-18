@@ -16,7 +16,7 @@ void main() {
   vec2 fuv = uvInComputeShader();
   vec2 aspect = vec2(screen) / float(screen.x);
 
-  vec2 xyRotation = fuv * aspect;
+  vec2 xyRotation = (fuv - 0.5) * 2. * aspect;
   vec3 direction = normalize(vec3(2., xyRotation.x, xyRotation.y));
   vec4 rotationUp = quaternion_create(vec3(0., 1., 0.), frameData_pitch);
   vec4 rotationAround = quaternion_create(vec3(0., 0., 1.), frameData_yaw);

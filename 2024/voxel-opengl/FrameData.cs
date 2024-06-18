@@ -18,7 +18,7 @@ namespace Voxelator
           while(yaw < -2*Math.PI) {
             yaw += 2.0f*(float)Math.PI;
           }
-          pitch = (float)Math.Clamp(pitch, -Math.PI, Math.PI);
+          pitch = (float)Math.Clamp(pitch, -Math.PI/2.0, Math.PI/2.0f);
           return [
             Unsafe.BitCast<float, int>(x),
             Unsafe.BitCast<float, int>(y),

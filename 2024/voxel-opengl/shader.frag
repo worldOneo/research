@@ -22,6 +22,6 @@ ivec2 screenCord;
 
 void main() {
   screenCord = ivec2((fUv + 1.) * 0.5 * vec2(800, 600));
-  FragColor = vec4(imageLoad(uTexture, screenCord).rg, 255, 255) / 255.;
+  FragColor = vec4(imageLoad(uTexture, screenCord).rg, 0., 255) / 255.;
   // FragColor = uvColor;
 }

@@ -81,14 +81,14 @@ Ray_VolumeIntersection Ray_volumeIntersection(Ray ray, vec3 boxMin, vec3 boxMax)
   vec3 tMin = (boxMin - ray.location) * ray.dirInv;
   vec3 tMax = (boxMax - ray.location) * ray.dirInv;
   vec3 t1 = min(tMin, tMax);
-  vec3 t2 = max(tMin, tMax);
+  vec3 t2 =  max(tMin, tMax);
   float tNear = max(max(t1.x, t1.y), t1.z);
   float tFar = min(min(t2.x, t2.y), t2.z);
 
   Ray_VolumeIntersection intersection;
   intersection.willHit = tNear < tFar;
   intersection.inside = all(greaterThan(ray.location, boxMin)) && all(lessThan(ray.location, boxMax));
-  intersection.dist = tNear;
+  intersection.dist = mix(1e30, tNear, intersection.willHit);
   return intersection;
 }
 
@@ -105,18 +105,18 @@ RayHit Ray_cast(Ray ray) {
   RayHit hit;
   vec3 octreeLocation = vec3(octree_x, octree_y, octree_z);
   vec3 octreeEnd = octreeLocation + float(octree_dimensions);
-  float totalDist = 0.;
-  for(int i = 0; i < maxSteps; i++) {
-    float d = cubeDF(ray.location, (octreeEnd-octreeLocation).x, octreeLocation);
-    if(d > 0) {
-      totalDist += d;
-      ray.location += ray.dir*(d +0.01);
-    } else {
-      break;
-    }
-  }
-  // Ray_VolumeIntersection intersection = Ray_volumeIntersection(ray, octreeLocation, octreeEnd);
+  // float totalDist = 0.;
+  // for(int i = 0; i < maxSteps; i++) {
+  //   float d = cubeDF(ray.location, (octreeEnd-octreeLocation).x, octreeLocation);
+  //   if(d > 0) {
+  //     totalDist += d;
+  //     ray.location += ray.dir*(d +0.01);
+  //   } else {
+  //     break;
+  //   }
+  // }
+  Ray_VolumeIntersection intersection = Ray_volumeIntersection(ray, octreeLocation, octreeEnd);
   // hit.voxel.color = vec3(uintBitsToFloat(data.x + (data.y << 16)));
-  hit.voxel.color = vec3(pow(2, 1+ totalDist) , 0., 0.);
+  hit.voxel.color = vec3(pow(2, 1+ intersection.dist), 0., 0.);
   return hit;
 }
