@@ -51,11 +51,11 @@ namespace Voxelator
                 node = _AllocateNode();
             }
             _Insert(dimensions, origin, node, location, data);
+            Console.WriteLine("{0}", node);
             foreach (var n in nodeList)
             {
                 Console.WriteLine("{0}", n);
             }
-            Console.WriteLine("{0}", node);
         }
 
         int _AllocateNode()
@@ -121,7 +121,12 @@ namespace Voxelator
         class Encoder
         {
             int index = 0;
+            int nodeOffset = 0;
             List<int> output = new();
+
+            public void StartNodes() {
+                nodeOffset = index;
+            }
 
             public int ReserveNode()
             {
@@ -134,19 +139,19 @@ namespace Voxelator
                 output.Add(0);
                 output.Add(0);
                 index += 8;
-                return index - 8;
+                return index - 8 - nodeOffset;
             }
 
             public void WriteNode(int idx, OctreeNode node)
             {
-                output[idx + 0] = node[0];
-                output[idx + 1] = node[1];
-                output[idx + 2] = node[2];
-                output[idx + 3] = node[3];
-                output[idx + 4] = node[4];
-                output[idx + 5] = node[5];
-                output[idx + 6] = node[6];
-                output[idx + 7] = node[7];
+                output[idx + nodeOffset + 0] = node[0];
+                output[idx + nodeOffset + 1] = node[1];
+                output[idx + nodeOffset + 2] = node[2];
+                output[idx + nodeOffset + 3] = node[3];
+                output[idx + nodeOffset + 4] = node[4];
+                output[idx + nodeOffset + 5] = node[5];
+                output[idx + nodeOffset + 6] = node[6];
+                output[idx + nodeOffset + 7] = node[7];
             }
 
             public void Append(int data)
@@ -174,6 +179,8 @@ namespace Voxelator
             }
             else
             {
+                encoder.Append(node);
+                encoder.StartNodes();
                 _Encode(encoder, node);
             }
             return encoder.Done();
@@ -208,7 +215,7 @@ namespace Voxelator
     {
         public override string ToString()
         {
-            return String.Format(
+            return string.Format(
                 "[{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}]",
                 children[0],
                 children[1],

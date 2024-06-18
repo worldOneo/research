@@ -18,17 +18,28 @@ namespace Voxelator
         private static ComputeShader compShader;
         private static Shader Shader;
 
-        static float[] Vertices = {
+        static float[] Vertices =
+        {
             // Positions     // Texture Coords
-            -1.0f,  1.0f,    0.0f, 1.0f,  // Top-left
-             1.0f,  1.0f,    1.0f, 1.0f,  // Top-right
-            -1.0f, -1.0f,    0.0f, 0.0f,  // Bottom-left
-             1.0f, -1.0f,    1.0f, 0.0f   // Bottom-right
+            -1.0f,
+            1.0f,
+            0.0f,
+            1.0f, // Top-left
+            1.0f,
+            1.0f,
+            1.0f,
+            1.0f, // Top-right
+            -1.0f,
+            -1.0f,
+            0.0f,
+            0.0f, // Bottom-left
+            1.0f,
+            -1.0f,
+            1.0f,
+            0.0f // Bottom-right
         };
 
-        static uint[] Indices = {
-            0,1,2,1,2,3
-        };
+        static uint[] Indices = { 0, 1, 2, 1, 2, 3 };
 
         private static Octree tree;
 
@@ -48,10 +59,11 @@ namespace Voxelator
 
         private static void Main(string[] args)
         {
-            tree = new Octree(new(1, 0, 0), 1);
-            // tree.Insert(new(1, 1, 1), 1);
-            // tree.Insert(new(1, 0, 1), 0);
-            // tree.Insert(new(5, 5, 5), 5);
+            tree = new Octree(new(1, 0, 0), 8);
+            tree.Insert(new(1, 1, 1), new Voxel().Encode());
+            tree.Insert(new(1, 0, 1), new Voxel().Encode());
+            tree.Insert(new(5, 5, 5), new Voxel().Encode());
+            tree.Encode().ToList().ForEach(Console.WriteLine);
             var options = WindowOptions.Default;
             options.Size = new Vector2D<int>(800, 600);
             options.Title = "The great Voxelator";
@@ -185,7 +197,7 @@ namespace Voxelator
         private static unsafe void OnRender(double dt)
         {
             HandleInput(dt);
-            Console.WriteLine(frameData);
+            // Console.WriteLine(frameData);
             frameData.framecount += 1;
             frameDataBuffer.Fill(frameData.Encode());
             frameDataBuffer.Bind(4);
@@ -193,7 +205,6 @@ namespace Voxelator
             Vao.Bind();
             octree.Bind(1);
             depthBuffer.Bind(GLEnum.ReadWrite);
-
 
             compShader.Use((uint)window.Size.X, (uint)window.Size.Y, 1);
             // TODO: Do compute shader sufficiently coordinate?
@@ -249,7 +260,6 @@ namespace Voxelator
         private static void MouseMove(IMouse arg1, Vector2 location)
         {
             inputs.mouseLocation = location;
-            Console.WriteLine("{0} {1}", location.X, location.Y);
         }
     }
 }
