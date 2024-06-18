@@ -18,23 +18,18 @@ namespace Voxelator
         private static ComputeShader compShader;
         private static Shader Shader;
 
-        private static readonly float[] Vertices =
-        {
-            -1.0f,
-            -1.0f,
-            0.0f,
-            -1.0f,
-            +1.0f,
-            0.0f,
-            +1.0f,
-            +1.0f,
-            0.0f,
-            +1.0f,
-            -1.0f,
-            0.0f,
+        static float[] Vertices = {
+            // Positions     // Texture Coords
+            -1.0f,  1.0f,    0.0f, 1.0f,  // Top-left
+             1.0f,  1.0f,    1.0f, 1.0f,  // Top-right
+            -1.0f, -1.0f,    0.0f, 0.0f,  // Bottom-left
+             1.0f, -1.0f,    1.0f, 0.0f   // Bottom-right
         };
 
-        private static readonly uint[] Indices = { 0, 3, 1, 2, 1, 3 };
+        static uint[] Indices = {
+            0,1,2,1,2,3
+        };
+
         private static Octree tree;
 
         private static FrameData frameData = new FrameData
@@ -46,16 +41,17 @@ namespace Voxelator
             pitch = 0,
             fov = 1.26f,
             framecount = 0,
+            width = 800,
+            height = 600,
         };
         private static SSBO frameDataBuffer;
 
         private static void Main(string[] args)
         {
-            tree = new Octree(new(1, 0, 0), 8);
-            tree.Insert(new(1, 1, 1), 1);
-            tree.Insert(new(1, 0, 1), 0);
-            tree.Insert(new(5, 5, 5), 5);
-            Array.ForEach(tree.Encode(), Console.WriteLine);
+            tree = new Octree(new(1, 0, 0), 1);
+            // tree.Insert(new(1, 1, 1), 1);
+            // tree.Insert(new(1, 0, 1), 0);
+            // tree.Insert(new(5, 5, 5), 5);
             var options = WindowOptions.Default;
             options.Size = new Vector2D<int>(800, 600);
             options.Title = "The great Voxelator";
@@ -109,8 +105,8 @@ namespace Voxelator
             Vao = new VertexArrayObject<float, uint>(Gl, Vbo, Ebo);
 
             //Telling the VAO object how to lay out the attribute pointers
-            Vao.VertexAttributePointer(0, 3, VertexAttribPointerType.Float, 3, 0);
-            Vao.VertexAttributePointer(1, 2, VertexAttribPointerType.Float, 3, 3);
+            Vao.VertexAttributePointer(0, 2, VertexAttribPointerType.Float, 4, 0);
+            Vao.VertexAttributePointer(1, 2, VertexAttribPointerType.Float, 4, 2);
 
             compShader = new ComputeShader(Gl, "depth.comp");
             Shader = new Shader(Gl, "shader.vert", "shader.frag");
@@ -158,8 +154,9 @@ namespace Voxelator
             }
             // Console.WriteLine("YYYY {0} {1}", deltaMouse.X, deltaMouse.Y);
             prevMouseLocation = inputs.mouseLocation;
-            frameData.yaw += deltaMouse.X * 0.01f;
-            frameData.pitch += deltaMouse.Y * 0.01f;
+            var mouseSensitivity = 0.004f;
+            frameData.yaw -= deltaMouse.X * mouseSensitivity;
+            frameData.pitch -= deltaMouse.Y * mouseSensitivity;
 
             Vector3 deltaMov = new();
             var movementSpeed = 1f;

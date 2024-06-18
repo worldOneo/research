@@ -4,6 +4,7 @@ layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 //@include quaternions.glsl
 //@include framedata.glsl
 //@include voxels.glsl
+//@include utils.glsl
 
 layout(rg16ui, binding = 3) uniform uimage2D uTexture;
 ivec2 screenCord;
@@ -11,13 +12,18 @@ ivec2 screenCord;
 void main() {
   screenCord = ivec2(gl_GlobalInvocationID.xy);
   vec3 location = vec3(frameData_x, frameData_y, frameData_z);
-  vec3 dir = vec3(1., 0., 0.);
+  uvec2 screen = uvec2(frameData_width, frameData_height);
+  vec2 fuv = uvInComputeShader();
+  vec2 aspect = vec2(screen) / float(screen.x);
 
+  vec2 xyRotation = fuv * aspect;
+  vec3 direction = normalize(vec3(2., xyRotation.x, xyRotation.y));
+  vec4 rotationUp = quaternion_create(vec3(0., 1., 0.), frameData_pitch);
+  vec4 rotationAround = quaternion_create(vec3(0., 0., 1.), frameData_yaw);
+  vec3 dir = quaternion_rotate(rotationAround, quaternion_rotate(rotationUp, direction));
 
-
-  vec2 fUv = vec2(screenCord) / vec2(800, 600);
-  Ray ray = Ray_new(vec3(frameData_x, frameData_y, frameData_z), vec3(1., 0., 0.));
+  Ray ray = Ray_new(location, dir);
   RayHit hit = Ray_cast(ray);
   //Here we are setting our output variable, for which the name is not important.
-  imageStore(uTexture, screenCord, uvec4(hit.voxel.color.rg * 255., 0, 0));
+  imageStore(uTexture, screenCord, uvec4(hit.voxel.color.rg, 0, 0));
 }

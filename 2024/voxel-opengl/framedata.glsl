@@ -6,4 +6,6 @@ layout(std430, binding = 4) buffer frameData {
   float frameData_pitch;
   float frameData_fov;
   uint frameData_frameNumber;
+  uint frameData_width;
+  uint frameData_height;
 };
