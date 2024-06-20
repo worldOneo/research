@@ -193,7 +193,7 @@ namespace Voxelator
                 int idx = output.ReserveNode();
                 var next = nodeList[-node];
                 output.WriteNode(idx, next);
-                return idx;
+                return -idx;
             }
             else
             {

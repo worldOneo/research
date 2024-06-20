@@ -57,11 +57,11 @@ struct Ray_Marchable {
 float _Ray_yank = 1e-5;
 
 Ray_Marchable Ray_maxMarchableDistanceInCube(Ray ray, vec3 origin, uint dimensions) {
-  vec3 closeBorders = origin;
+  vec3 nearBorders = origin;
   vec3 farBorders = origin + vec3(dimensions);
   
-  bvec3 positiveDirs = greaterThan(ray.dir, vec3(0));
-  vec3 borders = mix(closeBorders, farBorders, positiveDirs);
+  bvec3 positiveDirs = greaterThan(ray.dir, vec3(0.));
+  vec3 borders = mix(nearBorders, farBorders, positiveDirs);
   vec3 stepSizeToBorder = (borders - ray.location) * ray.dirInv;
   vec3 yankDirs = mix(vec3(-_Ray_yank), vec3(_Ray_yank), positiveDirs);
   
@@ -70,7 +70,7 @@ Ray_Marchable Ray_maxMarchableDistanceInCube(Ray ray, vec3 origin, uint dimensio
   bool pickx = stepSizeToBorder.x < stepSizeToBorder.y && stepSizeToBorder.x < stepSizeToBorder.z;
   vec3 yankxy = pickx ? vec3(yankDirs.x, 0., 0.) : vec3(0., yankDirs.y, 0.);
 
-  bool pickz = stepSizeToBorder.x < stepSizeToBorder.z && stepSizeToBorder.y < stepSizeToBorder.z;
+  bool pickz = stepSizeToBorder.z < stepSizeToBorder.x && stepSizeToBorder.z < stepSizeToBorder.y;
   vec3 yank = pickz ? vec3(0., 0., yankDirs.z) : yankxy;
   
   Ray_Marchable marchable;
@@ -84,11 +84,6 @@ struct Ray_VolumeIntersection {
   bool inside;
   float dist;
 };
-
-float cubeDF(vec3 pos, float size, vec3 cubeOrig) {
-    vec3 d = abs((cubeOrig + size / 2.) - pos) - size / 2.;
-    return min(max(d.x, max(d.y, d.z)), 0.0) + length(max(d, vec3(0.0)));
-}
 
 Ray_VolumeIntersection Ray_volumeIntersection(Ray ray, vec3 boxMin, vec3 boxMax) {
   vec3 tMin = (boxMin - ray.location) * ray.dirInv;
@@ -136,22 +131,24 @@ struct _Ray_CastStack {
 
 RayHit _Ray_castInOctree(Ray ray) {
   _Ray_CastStack stack[20];
-  int idx = 0;
-  vec3 octreeLocation = vec3(octree_x, octree_y, octree_z);
-  vec3 octreeCenter = octreeLocation + float(octree_dimensions >> 1);
   RayHit hit;
 
-  stack[0].node = octree_root;
-  stack[0].location = octreeLocation;
   float totalDistance = 0;
+  int maxidx = 0;
   
   for(int steps = 0; steps < maxSteps; steps++) {
+    int idx = 0;
+    vec3 octreeLocation = vec3(octree_x, octree_y, octree_z);
+    vec3 octreeCenter = octreeLocation + float(octree_dimensions >> 1);
+    stack[0].node = octree_root;
+    stack[0].location = octreeLocation;
     bool voxelLayerStep = false;
     // go into octree
     while(stack[idx].node != int_maxValue) {
       int nextIdx = _Ray_findOctreeIndex(ray.location, octreeLocation, octreeCenter);
 
       idx += 1;
+      maxidx = max(idx, maxidx);
       octreeLocation = _Ray_octreeSubtreeLocation(ray.location, octreeLocation, octreeCenter);
       octreeCenter = octreeLocation + float(octree_dimensions >> (idx+1));
       stack[idx].node = octree_nodeData[stack[idx-1].node+nextIdx];
@@ -180,17 +177,18 @@ RayHit _Ray_castInOctree(Ray ray) {
     // march the largest marchable distance in the current cube
     Ray_Marchable marchable = Ray_maxMarchableDistanceInCube(ray, octreeLocation, octree_dimensions >> idx);
     totalDistance += marchable.dist;
-    ray.location += ray.dir * marchable.dist * 1.01;
+    ray.location += ray.dir * marchable.dist;
     ray.location += marchable.yank;
+
+    if(!_Ray_octreeContainsRay(ray.location, vec3(octree_x, octree_y, octree_z), octree_dimensions)) {
+      break;
+    }
 
     // find closest parent cube in voxel hirachy
     // while(idx > 0 && !_Ray_octreeContainsRay(ray.location, octreeLocation, octree_dimensions >> (idx - 1))) {
     //   octreeLocation = stack[idx].location;
     //   idx -= 1;
     // }
-    idx = 0;
-    octreeLocation = vec3(octree_x, octree_y, octree_z);
-    octreeCenter = octreeLocation + float(octree_dimensions >> (idx+1));
     // hit.steps = steps;
     // if(!_Ray_octreeContainsRay(ray.location, octreeLocation, octree_dimensions >> (idx - 1))) {
     //   hit.steps = steps+1;
@@ -200,6 +198,7 @@ RayHit _Ray_castInOctree(Ray ray) {
   }
   hit.dist = totalDistance;
   hit.hit = false;
+  hit.steps = maxidx;
   return hit;
 }
 
@@ -208,14 +207,16 @@ RayHit Ray_cast(Ray ray) {
   vec3 octreeLocation = vec3(octree_x, octree_y, octree_z);
   vec3 octreeEnd = octreeLocation + float(octree_dimensions);
   Ray_VolumeIntersection intersection = Ray_volumeIntersection(ray, octreeLocation, octreeEnd);
-  if(intersection.willHit) {
-    ray.location += ray.dir * (intersection.dist+0.01);
+  if(intersection.willHit || intersection.inside) {
+    if(intersection.willHit) {
+      ray.location += ray.dir * (intersection.dist+0.01);
+    }
     hit = _Ray_castInOctree(ray);
   } else {
     hit.steps = 0;
-    // hit.hit = true;
+    hit.hit = false;
   }
   // hit.voxel.color = vec3(uintBitsToFloat(data.x + (data.y << 16)));
-  hit.voxel.color = vec3(hit.dist*10., float(hit.hit)*50., 0.);
+  hit.voxel.color = vec3(float(hit.hit)*255., float(hit.steps)*10., 0.);
   return hit;
 }
