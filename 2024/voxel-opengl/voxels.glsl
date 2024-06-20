@@ -136,15 +136,19 @@ RayHit _Ray_castInOctree(Ray ray) {
   float totalDistance = 0;
   int maxidx = 0;
   
+  int realStepCount = 0;
+  
+  int idx = 0;
+  vec3 octreeLocation = vec3(octree_x, octree_y, octree_z);
+  vec3 octreeCenter = octreeLocation + float(octree_dimensions >> 1);
+  stack[0].node = octree_root;
+  stack[0].location = octreeLocation;
+  
   for(int steps = 0; steps < maxSteps; steps++) {
-    int idx = 0;
-    vec3 octreeLocation = vec3(octree_x, octree_y, octree_z);
-    vec3 octreeCenter = octreeLocation + float(octree_dimensions >> 1);
-    stack[0].node = octree_root;
-    stack[0].location = octreeLocation;
     bool voxelLayerStep = false;
     // go into octree
     while(stack[idx].node != int_maxValue) {
+      realStepCount += 1;
       int nextIdx = _Ray_findOctreeIndex(ray.location, octreeLocation, octreeCenter);
 
       idx += 1;
@@ -169,7 +173,7 @@ RayHit _Ray_castInOctree(Ray ray) {
         hit.dist = totalDistance;
         hit.voxel = Voxel_fromUint(voxelData);
         hit.hit = true;
-        hit.steps = steps+1;
+        hit.steps = realStepCount;
         return hit;
       }
     }
@@ -185,20 +189,22 @@ RayHit _Ray_castInOctree(Ray ray) {
     }
 
     // find closest parent cube in voxel hirachy
-    // while(idx > 0 && !_Ray_octreeContainsRay(ray.location, octreeLocation, octree_dimensions >> (idx - 1))) {
-    //   octreeLocation = stack[idx].location;
-    //   idx -= 1;
-    // }
-    // hit.steps = steps;
-    // if(!_Ray_octreeContainsRay(ray.location, octreeLocation, octree_dimensions >> (idx - 1))) {
-    //   hit.steps = steps+1;
-    //   hit.dist = totalDistance;
-    //   break;
-    // }
+    while(idx > 0 && !_Ray_octreeContainsRay(ray.location, octreeLocation, octree_dimensions >> (idx+1))) {
+      idx -= 1;
+      octreeLocation = stack[idx].location;
+      realStepCount += 1;
+    }
+
+    if(!_Ray_octreeContainsRay(ray.location, octreeLocation, octree_dimensions >> idx)) {
+      hit.steps = steps+1;
+      hit.dist = totalDistance;
+      break;
+    }
+    octreeCenter = octreeLocation + float(octree_dimensions >> (idx+1));
   }
   hit.dist = totalDistance;
   hit.hit = false;
-  hit.steps = maxidx;
+  hit.steps = realStepCount;
   return hit;
 }
 
@@ -217,6 +223,6 @@ RayHit Ray_cast(Ray ray) {
     hit.hit = false;
   }
   // hit.voxel.color = vec3(uintBitsToFloat(data.x + (data.y << 16)));
-  hit.voxel.color = vec3(float(hit.hit)*255., float(hit.steps)*10., 0.);
+  hit.voxel.color = vec3(float(hit.hit)*255., float(hit.steps)*5., 0.);
   return hit;
 }
