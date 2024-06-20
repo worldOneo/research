@@ -124,13 +124,7 @@ bool _Ray_octreeContainsRay(vec3 location, vec3 octreeLocation, uint dimensions)
   return all(greaterThan(location, octreeLocation)) && all(lessThan(location, end));
 }
 
-struct _Ray_CastStack {
-  vec3 location;
-  int node;
-};
-
 RayHit _Ray_castInOctree(Ray ray) {
-  _Ray_CastStack stack[20];
   RayHit hit;
 
   float totalDistance = 0;
@@ -138,16 +132,16 @@ RayHit _Ray_castInOctree(Ray ray) {
   
   int realStepCount = 0;
   
-  int idx = 0;
-  vec3 octreeLocation = vec3(octree_x, octree_y, octree_z);
-  vec3 octreeCenter = octreeLocation + float(octree_dimensions >> 1);
-  stack[0].node = octree_root;
-  stack[0].location = octreeLocation;
   
   for(int steps = 0; steps < maxSteps; steps++) {
+    int idx = 0;
+    vec3 octreeLocation = vec3(octree_x, octree_y, octree_z);
+    vec3 octreeCenter = octreeLocation + float(octree_dimensions >> 1);
+    int node = octree_root;
+    vec3 location = octreeLocation;
     bool voxelLayerStep = false;
     // go into octree
-    while(stack[idx].node != int_maxValue) {
+    while(node != int_maxValue) {
       realStepCount += 1;
       int nextIdx = _Ray_findOctreeIndex(ray.location, octreeLocation, octreeCenter);
 
@@ -155,20 +149,20 @@ RayHit _Ray_castInOctree(Ray ray) {
       maxidx = max(idx, maxidx);
       octreeLocation = _Ray_octreeSubtreeLocation(ray.location, octreeLocation, octreeCenter);
       octreeCenter = octreeLocation + float(octree_dimensions >> (idx+1));
-      stack[idx].node = octree_nodeData[stack[idx-1].node+nextIdx];
-      stack[idx].location = octreeLocation;
+      node = octree_nodeData[node+nextIdx];
+      location = octreeLocation;
       
       if (voxelLayerStep) {
         break;
       }
       
-      voxelLayerStep = stack[idx].node < 0;
-      stack[idx].node = abs(stack[idx].node);
+      voxelLayerStep = node < 0;
+      node = abs(node);
     }
 
     // if voxel layer was reached, test if a voxel was hit
     if (voxelLayerStep) {
-      uint voxelData = uint(stack[idx].node);
+      uint voxelData = uint(node);
       if(Voxel_isPresent(voxelData)) {
         hit.dist = totalDistance;
         hit.voxel = Voxel_fromUint(voxelData);
@@ -187,20 +181,6 @@ RayHit _Ray_castInOctree(Ray ray) {
     if(!_Ray_octreeContainsRay(ray.location, vec3(octree_x, octree_y, octree_z), octree_dimensions)) {
       break;
     }
-
-    // find closest parent cube in voxel hirachy
-    while(idx > 0 && !_Ray_octreeContainsRay(ray.location, octreeLocation, octree_dimensions >> (idx+1))) {
-      idx -= 1;
-      octreeLocation = stack[idx].location;
-      realStepCount += 1;
-    }
-
-    if(!_Ray_octreeContainsRay(ray.location, octreeLocation, octree_dimensions >> idx)) {
-      hit.steps = steps+1;
-      hit.dist = totalDistance;
-      break;
-    }
-    octreeCenter = octreeLocation + float(octree_dimensions >> (idx+1));
   }
   hit.dist = totalDistance;
   hit.hit = false;
