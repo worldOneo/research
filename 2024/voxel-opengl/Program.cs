@@ -59,7 +59,7 @@ namespace Voxelator
 
         private static void Main(string[] args)
         {
-            tree = new Octree(new(1, 0, 0), 8);
+            tree = new Octree(new(1, 0, 0), 1 << 10);
             tree.Insert(new(1, 1, 1), new Voxel().Encode());
             tree.Insert(new(1, 0, 1), new Voxel().Encode());
             tree.Insert(new(5, 5, 5), new Voxel().Encode());
@@ -172,6 +172,8 @@ namespace Voxelator
 
             Vector3 deltaMov = new();
             var movementSpeed = 1f;
+            if(inputs.keysPressed.Contains(Key.ControlLeft))
+                movementSpeed = 10f;
             if (inputs.keysPressed.Contains(Key.W))
                 deltaMov.X += movementSpeed * (float)dt;
             if (inputs.keysPressed.Contains(Key.D))
@@ -206,7 +208,7 @@ namespace Voxelator
             octree.Bind(1);
             depthBuffer.Bind(GLEnum.ReadWrite);
 
-            compShader.Use((uint)window.Size.X, (uint)window.Size.Y, 1);
+            compShader.Use(frameData.width, frameData.height, 1);
             // TODO: Do compute shader sufficiently coordinate?
             Gl.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit);
             Shader.Use();
@@ -222,6 +224,9 @@ namespace Voxelator
         private static void OnFramebufferResize(Vector2D<int> newSize)
         {
             Gl.Viewport(newSize);
+            frameData.width = (uint)newSize.X;
+            frameData.height = (uint)newSize.Y;
+            depthBuffer.Instantiate((uint)newSize.X, (uint)newSize.Y);
         }
 
         private static void OnClose()

@@ -54,7 +54,7 @@ struct Ray_Marchable {
   vec3 yank;
 };
 
-float _Ray_yank = 1e-5;
+float _Ray_yank = 1e-3;
 
 Ray_Marchable Ray_maxMarchableDistanceInCube(Ray ray, vec3 origin, uint dimensions) {
   vec3 nearBorders = origin;
@@ -127,6 +127,10 @@ bool _Ray_octreeContainsRay(vec3 location, vec3 octreeLocation, uint dimensions)
 RayHit _Ray_castInOctree(Ray ray) {
   RayHit hit;
 
+  if(!_Ray_octreeContainsRay(ray.location, vec3(octree_x, octree_y, octree_z), octree_dimensions)) {
+    return hit;
+  }
+
   float totalDistance = 0;
   int maxidx = 0;
   
@@ -195,7 +199,7 @@ RayHit Ray_cast(Ray ray) {
   Ray_VolumeIntersection intersection = Ray_volumeIntersection(ray, octreeLocation, octreeEnd);
   if(intersection.willHit || intersection.inside) {
     if(intersection.willHit) {
-      ray.location += ray.dir * (intersection.dist+0.01);
+      ray.location += ray.dir * intersection.dist + ray.dir * 0.001;
     }
     hit = _Ray_castInOctree(ray);
   } else {
@@ -203,6 +207,6 @@ RayHit Ray_cast(Ray ray) {
     hit.hit = false;
   }
   // hit.voxel.color = vec3(uintBitsToFloat(data.x + (data.y << 16)));
-  hit.voxel.color = vec3(float(hit.hit)*255., float(hit.steps)*5., 0.);
+  hit.voxel.color = vec3(float(hit.hit)*255., float(hit.steps)*1., 0.);
   return hit;
 }
