@@ -83,6 +83,7 @@ struct Ray_VolumeIntersection {
   bool willHit;
   bool inside;
   float dist;
+  vec3 yank;
 };
 
 Ray_VolumeIntersection Ray_volumeIntersection(Ray ray, vec3 boxMin, vec3 boxMax) {
@@ -93,10 +94,18 @@ Ray_VolumeIntersection Ray_volumeIntersection(Ray ray, vec3 boxMin, vec3 boxMax)
   float tNear = max(max(t1.x, t1.y), t1.z);
   float tFar = min(min(t2.x, t2.y), t2.z);
 
+  bvec3 positiveDirs = greaterThan(ray.dir, vec3(0.));
+  vec3 yankDirs = mix(vec3(-_Ray_yank), vec3(_Ray_yank), positiveDirs);
+  bool pickx = t1.x > t1.y && t1.x > t1.z;
+  vec3 yankxy = pickx ? vec3(yankDirs.x, 0., 0.) : vec3(0., yankDirs.y, 0.);
+  bool pickz = t1.z > t1.x && t1.z > t1.y;
+  vec3 yank = pickz ? vec3(0., 0., yankDirs.z) : yankxy;
+
   Ray_VolumeIntersection intersection;
   intersection.willHit = tNear < tFar && tNear > 0.;
   intersection.inside = all(greaterThan(ray.location, boxMin)) && all(lessThan(ray.location, boxMax));
   intersection.dist = mix(1e30, tNear, intersection.willHit);
+  intersection.yank = yank;
   return intersection;
 }
 
@@ -127,10 +136,6 @@ bool _Ray_octreeContainsRay(vec3 location, vec3 octreeLocation, uint dimensions)
 RayHit _Ray_castInOctree(Ray ray) {
   RayHit hit;
 
-  if(!_Ray_octreeContainsRay(ray.location, vec3(octree_x, octree_y, octree_z), octree_dimensions)) {
-    return hit;
-  }
-
   float totalDistance = 0;
   int maxidx = 0;
   
@@ -144,8 +149,9 @@ RayHit _Ray_castInOctree(Ray ray) {
     int node = octree_root;
     vec3 location = octreeLocation;
     bool voxelLayerStep = false;
+    bool macDepth = false;
     // go into octree
-    while(node != int_maxValue) {
+    while(!maxDepth) {
       realStepCount += 1;
       int nextIdx = _Ray_findOctreeIndex(ray.location, octreeLocation, octreeCenter);
 
@@ -199,7 +205,7 @@ RayHit Ray_cast(Ray ray) {
   Ray_VolumeIntersection intersection = Ray_volumeIntersection(ray, octreeLocation, octreeEnd);
   if(intersection.willHit || intersection.inside) {
     if(intersection.willHit) {
-      ray.location += ray.dir * intersection.dist + ray.dir * 0.001;
+      ray.location += ray.dir * intersection.dist + intersection.yank;
     }
     hit = _Ray_castInOctree(ray);
   } else {

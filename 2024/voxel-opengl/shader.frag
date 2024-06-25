@@ -1,7 +1,8 @@
 //Specifying the version like in our vertex shader.
 #version 450 core
-//The input variables, again prefixed with an f as they are the input variables of our fragment shader.
-//These have to share name for now even though there is a way around this later on.
+
+//@include framedata.glsl
+
 in vec2 fUv;
 
 //The output of our fragment shader, this just has to be a vec3 or a vec4, containing the color information about
@@ -21,7 +22,7 @@ ivec2 screenCord;
 // RGB each 5 bits
 
 void main() {
-  screenCord = ivec2((fUv + 1.) * 0.5 * vec2(800, 600));
+  screenCord = ivec2((fUv + 1.) * 0.5 * vec2(frameData_width, frameData_height));
   FragColor = vec4(imageLoad(uTexture, screenCord).rg, 0., 255) / 255.;
   // FragColor = uvColor;
 }

@@ -123,6 +123,16 @@ namespace Voxelator
             compShader = new ComputeShader(Gl, "depth.comp");
             Shader = new Shader(Gl, "shader.vert", "shader.frag");
 
+            octree = new SSBO(Gl);
+            CreateDepthBuffer();
+            int[] data = tree.Encode();
+            octree.Fill(data);
+            Console.WriteLine(Gl.GetError());
+            frameDataBuffer = new SSBO(Gl);
+            frameDataBuffer.Fill(frameData.Encode());
+        }
+
+        private static void CreateDepthBuffer() {
             depthBuffer = new ImageBuffer(
                 Gl,
                 3,
@@ -132,15 +142,6 @@ namespace Voxelator
                 SizedInternalFormat.RG16ui
             );
             depthBuffer.Instantiate((uint)window.Size.X, (uint)window.Size.Y);
-
-            octree = new SSBO(Gl);
-            Console.WriteLine(Gl.GetError());
-
-            int[] data = tree.Encode();
-            octree.Fill(data);
-            Console.WriteLine(Gl.GetError());
-            frameDataBuffer = new SSBO(Gl);
-            frameDataBuffer.Fill(frameData.Encode());
         }
 
         private static Vector2? prevMouseLocation = null;
@@ -226,7 +227,8 @@ namespace Voxelator
             Gl.Viewport(newSize);
             frameData.width = (uint)newSize.X;
             frameData.height = (uint)newSize.Y;
-            depthBuffer.Instantiate((uint)newSize.X, (uint)newSize.Y);
+            depthBuffer.Dispose();
+            CreateDepthBuffer();
         }
 
         private static void OnClose()
